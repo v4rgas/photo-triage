@@ -14,6 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On a tag push this is already the tag. On a manual run it would
+          # otherwise be the default branch, and we would publish whatever is
+          # on main under the version the tag names.
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: astral-sh/setup-uv@v5
       - run: uv build
       - run: uv tool run twine check dist/*
