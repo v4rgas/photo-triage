@@ -22,7 +22,6 @@ which is notice an AMD card.
 from __future__ import annotations
 
 import logging
-import os
 import platform
 import shutil
 import sys
@@ -72,17 +71,7 @@ class Backend:
         return _TORCH_BACKEND[self.name]
 
     def install_command(self) -> str:
-        """What to run to get the right PyTorch, for how this was installed.
-
-        A distribution package manager owns its own files, so telling someone
-        who installed through pacman to run a uv command would have them
-        shadow a tracked install with an untracked one. The advice follows the
-        route the user actually took.
-        """
-        if externally_managed() and shutil.which("pacman"):
-            variant = {"rocm": "python-pytorch-rocm", "cuda": "python-pytorch-cuda"}
-            package = variant.get(self.name, "python-pytorch")
-            return f"sudo pacman -S {package} python-open-clip-torch"
+        """The one command that installs photo-triage with the right PyTorch."""
         return (
             f'uv tool install "{PACKAGE}[model]" '
             f"--torch-backend={self.torch_backend}"
@@ -197,13 +186,3 @@ def _has_open_clip() -> bool:
 
 def _any_render_node() -> bool:
     return any(Path("/dev/dri").glob("renderD*")) if Path("/dev/dri").is_dir() else False
-
-
-# Kept for the environment probe in tests and for anyone reading logs.
-def externally_managed() -> bool:
-    """True if this interpreter belongs to a distribution rather than to a venv."""
-    if os.environ.get("VIRTUAL_ENV") or sys.prefix != sys.base_prefix:
-        return False
-    import sysconfig
-
-    return Path(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED").exists()

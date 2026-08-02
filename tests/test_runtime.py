@@ -41,19 +41,3 @@ def test_the_install_command_is_the_one_supported_command():
 def test_installed_backend_reports_a_known_name_or_nothing():
     assert installed_backend() in {None, "cuda", "rocm", "mps", "cpu"}
 
-
-def test_advice_follows_the_route_the_user_installed_by(monkeypatch):
-    """A pacman user told to run uv would shadow a tracked install with an
-    untracked one, so the advice has to match how they got here."""
-    import shutil
-
-    import photo_triage.runtime as runtime
-
-    monkeypatch.setattr(runtime, "externally_managed", lambda: True)
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/pacman")
-    assert runtime.Backend("rocm", "t").install_command() == (
-        "sudo pacman -S python-pytorch-rocm python-open-clip-torch"
-    )
-
-    monkeypatch.setattr(runtime, "externally_managed", lambda: False)
-    assert runtime.Backend("rocm", "t").install_command().startswith("uv tool install")

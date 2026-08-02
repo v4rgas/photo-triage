@@ -84,22 +84,8 @@ batch can be restored, not only the most recent.
 
 ## Install
 
-> Not on PyPI or the AUR yet. Until then:
+> Not on PyPI yet. Until then:
 > `git clone https://github.com/v4rgas/photo-triage && cd photo-triage && uv tool install ".[model]" --torch-backend=auto`
-
-### Arch Linux
-
-```bash
-paru -S photo-triage
-```
-
-pacman owns every file and resolves PyTorch itself. `python-pytorch-rocm` and
-`python-pytorch-cuda` both provide `python-pytorch` and conflict with each
-other, which is how Arch says "pick the build that matches your hardware", so
-pacman asks you once and tracks whatever you choose. Nothing is downloaded at
-runtime.
-
-### Everywhere else
 
 ```bash
 uv tool install "photo-triage[model]" --torch-backend=auto
