@@ -1,0 +1,3 @@
+export PATH=/home/juan/photo-triage/.venv/bin:$PATH
+export PS1='\[\e[38;5;110m\]~/photos\[\e[0m\] $ '
+clear

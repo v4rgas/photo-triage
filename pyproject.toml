@@ -1,0 +1,38 @@
+[project]
+name = "photo-triage"
+version = "0.1.0"
+description = "Local, offline semantic triage for folders full of images"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# torch/open_clip are deliberately NOT listed here. PyTorch ships a different
+# wheel per backend (PROJECT.md 4a) and the user must pick one; declaring it as
+# a dependency would silently install the CPU build over someone's ROCm build.
+# Everything except the embed and text-encode paths runs without it.
+dependencies = [
+    "flask>=3.0",
+    "pillow>=10.0",
+    "imagehash>=4.3",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Convenience only, and only correct on NVIDIA/CPU. See README for AMD/Apple.
+model = ["open_clip_torch>=2.24"]
+
+[project.scripts]
+photo-triage = "photo_triage.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["photo_triage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

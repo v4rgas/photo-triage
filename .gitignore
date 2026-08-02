@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# photo-triage writes all of its state inside the folder being triaged
+.phototriage/
+
+# demo working files
+demo/raw.mkv
+demo/marks.json
+demo/filter.txt
+demo/cap*.txt
+demo/chrome-profile/

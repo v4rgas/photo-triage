@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>photo-triage</title>
+<!-- No preload for the webfont: it is not in the repo (see README), and a
+     preload of a file that is absent costs a 404 on every page load. Drop
+     geist-variable.woff2 into static/ and add the preload back. -->
+<link rel="stylesheet" href="./style.css">
+</head>
+<body data-density="M" data-view="grid">
+
+<header id="toolbar" class="glass">
+  <div class="row">
+    <label id="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <input id="search" type="search" autocomplete="off" spellcheck="false"
+             placeholder="birthday cake · receipt · my dog · people at the beach">
+    </label>
+    <div id="filters" class="row">
+      <select id="f-group" class="ghost" aria-label="Group">
+        <option value="">all groups</option>
+        <option value="junk">junk</option>
+        <option value="review">review</option>
+        <option value="keep">keep</option>
+      </select>
+      <select id="f-cat" class="ghost" aria-label="Category"><option value="">all categories</option></select>
+      <select id="f-folder" class="ghost" aria-label="Folder"><option value="">all folders</option></select>
+      <select id="f-show" class="ghost" aria-label="Which images to show">
+        <option value="unsaved">hide saved</option>
+        <option value="saved">only saved</option>
+        <option value="all">everything</option>
+      </select>
+      <select id="f-view" class="ghost" aria-label="View">
+        <option value="active">folder</option>
+        <option value="quarantine">quarantine</option>
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div id="counts" class="num">loading…</div>
+    <button id="btn-review" class="ghost" hidden></button>
+    <div id="density" role="group" aria-label="Thumbnail size">
+      <button class="ghost" data-size="S" aria-pressed="false">S</button>
+      <button class="ghost" data-size="M" aria-pressed="true">M</button>
+      <button class="ghost" data-size="L" aria-pressed="false">L</button>
+    </div>
+  </div>
+  <div id="progress" hidden></div>
+</header>
+
+<main id="grid" role="grid" aria-label="Photographs" tabindex="0"></main>
+
+<section id="review" aria-label="Review mode">
+  <div class="head"><b id="review-title"></b><span id="review-sub"></span>
+    <button id="review-done" class="ghost">back to grid</button></div>
+  <div class="sheet" id="review-sheet" role="grid" aria-label="Category review"></div>
+</section>
+
+<div id="empty" aria-live="polite"></div>
+
+<div id="selbar" class="glass" data-open="false" role="status">
+  <span id="selcount" class="num"></span>
+  <a id="escalate" class="escalate" role="button" tabindex="0" hidden></a>
+  <span id="selmsg" class="msg" hidden></span>
+  <button id="btn-save" class="ghost">Save</button>
+  <button id="btn-restore" class="ghost" hidden>Restore</button>
+  <button id="btn-delete" class="ghost destructive">Quarantine</button>
+  <button id="btn-clear" class="ghost" aria-label="Clear selection">✕</button>
+</div>
+
+<div id="lightbox" data-open="false" role="dialog" aria-modal="true" aria-label="Full size image">
+  <img id="lightbox-img" alt="">
+  <div class="caption glass">
+    <b id="lightbox-name"></b>
+    <div id="lightbox-meta" class="num"></div>
+  </div>
+</div>
+
+<aside id="help" class="glass" aria-label="Keyboard shortcuts">
+  <dl>
+    <dt>A</dt><dd>select everything shown</dd>
+    <dt>D</dt><dd>quarantine the selection</dd>
+    <dt>S</dt><dd>save / protect</dd>
+    <dt>C</dt><dd>clear selection</dd>
+    <dt>U</dt><dd>undo the last quarantine batch</dd>
+    <dt>R</dt><dd>restore (quarantine view)</dd>
+    <dt>F</dt><dd>find visually similar</dd>
+    <dt>Esc</dt><dd>close</dd>
+    <dt>?</dt><dd>this sheet</dd>
+  </dl>
+</aside>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

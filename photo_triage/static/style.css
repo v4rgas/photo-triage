@@ -1,0 +1,527 @@
+/* photo-triage: the whole stylesheet.
+ *
+ * One file, no preprocessor, no CDN, nothing fetched at runtime. See DESIGN.md;
+ * section numbers below refer to it.
+ *
+ * The rule that constrains everything: backdrop-filter appears only on the
+ * three fixed panels (§4.1). A blurred element re-composites whenever anything
+ * behind it changes, and behind the toolbar the grid is always scrolling. One
+ * fixed strip is free; two hundred blurred tiles is a slideshow.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Selection and focus only. The only chromatic colour in the chrome. */
+  --accent:       oklch(66% 0.13 247);
+  --accent-quiet: oklch(66% 0.13 247 / 0.16);
+
+  /* Never a fill for anything larger than a badge. */
+  --junk:   oklch(68% 0.15 42);
+  --review: oklch(76% 0.13 85);
+  --keep:   oklch(70% 0.12 152);
+
+  /* Hue-matched neutrals. Never pure black: a true black surround makes dark
+     photographs look like holes in the page. */
+  --bg:        oklch(17% 0.008 247);
+  --bg-sunken: oklch(13% 0.008 247);
+  --ink:       oklch(95% 0.004 247);
+  --ink-quiet: oklch(66% 0.008 247);
+  --hairline:  oklch(95% 0.004 247 / 0.13);
+
+  --font-ui: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --t-micro: 11px;
+  --t-body:  13px;
+  --t-input: 15px;
+  --t-title: 17px;
+
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 20px; --s5: 32px;
+
+  /* Concentric corners: an inner radius is the outer minus the padding. */
+  --r-glass: 16px;
+  --r-control: 9px;
+  --r-tile: 6px;
+
+  --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --d-instant: 90ms;
+  --d-quick:   180ms;
+  --d-settle:  320ms;
+
+  --toolbar-h: 76px;
+}
+
+/* Bundled, never @import-ed, so the app is identical offline. If the file is
+   absent the stack below it is already correct. This is the one asset whose
+   absence must not break anything. */
+@font-face {
+  font-family: 'Geist';
+  src: url('./geist-variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 440 var(--t-body)/1.45 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow-y: scroll;
+}
+
+/* Counts update on every keystroke; proportional figures make them jitter. */
+.num { font-variant-numeric: tabular-nums; }
+
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Material: glass (§4.1) ───────────────────────────────────────────── */
+
+.glass {
+  position: relative;
+  background: oklch(21% 0.008 247 / 0.58);
+  /* saturate() is the part people leave out: blur alone desaturates what is
+     behind it and the panel goes muddy over a colourful grid. */
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-glass);
+  box-shadow:
+    0 0 0 0.5px oklch(0% 0 0 / 0.4),
+    0 12px 32px -8px oklch(0% 0 0 / 0.5);
+  contain: paint;
+}
+
+/* The specular edge. This single line is what makes it read as glass rather
+   than as a translucent grey rectangle. */
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(oklch(100% 0 0 / 0.16), transparent 1px);
+  pointer-events: none;
+}
+
+/* ── Controls (§6) ────────────────────────────────────────────────────── */
+
+.ghost {
+  background: none;
+  border: 0;
+  border-radius: var(--r-control);
+  color: var(--ink-quiet);
+  padding: 6px var(--s2);
+  cursor: pointer;
+  transition: background var(--d-instant) linear, color var(--d-instant) linear;
+}
+.ghost:hover { background: var(--accent-quiet); color: var(--ink); }
+.ghost[aria-pressed='true'] { background: var(--accent-quiet); color: var(--ink); }
+
+.filled {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--r-control);
+  color: oklch(100% 0 0);
+  padding: 6px var(--s3);
+  cursor: pointer;
+  font-weight: 560;
+}
+
+.destructive { color: var(--junk); }
+.destructive:hover { background: oklch(68% 0.15 42 / 0.18); color: var(--junk); }
+.destructive[data-armed='true'] {
+  background: var(--junk);
+  color: oklch(18% 0.02 42);
+  font-weight: 560;
+}
+
+select.ghost { appearance: none; padding-right: var(--s3); }
+select.ghost option { background: var(--bg); color: var(--ink); }
+
+/* ── Toolbar (§5) ─────────────────────────────────────────────────────── */
+
+/* A floating inset panel, not a full-bleed bar: 12px of grid stays visible
+   down both sides so the photographs are seen to continue underneath it. */
+#toolbar {
+  position: fixed;
+  z-index: 10;
+  top: var(--s3);
+  left: var(--s3);
+  right: var(--s3);
+  padding: var(--s2) var(--s3);
+  container-type: inline-size;
+}
+
+#toolbar .row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+#toolbar .row + .row { margin-top: 2px; }
+
+/* The visual anchor of the toolbar. */
+#search-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1 1 auto;
+  min-width: 0;
+  background: oklch(66% 0.13 247 / 0.064);
+  border-radius: var(--r-control);
+  padding: 4px var(--s2);
+  transition: background var(--d-quick) var(--ease-out);
+}
+#search-wrap:focus-within { background: var(--accent-quiet); }
+#search-wrap svg { flex: none; color: var(--ink-quiet); }
+
+#search {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: 0;
+  font-size: var(--t-input);
+  letter-spacing: -0.005em;
+  padding: 3px 0;
+}
+#search::placeholder { color: var(--ink-quiet); }
+
+#counts {
+  color: var(--ink-quiet);
+  font-size: var(--t-micro);
+  letter-spacing: 0.02em;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#density { display: flex; gap: 2px; }
+#density button { padding: 4px 7px; font-size: var(--t-micro); }
+
+/* Progress is a hairline, not a spinner (§8). */
+#progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 0;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  transition: width var(--d-quick) linear;
+}
+#progress[hidden] { display: none; }
+
+@container (max-width: 640px) {
+  #toolbar .row { flex-wrap: wrap; }
+  #filters { order: 3; width: 100%; }
+}
+
+/* ── Grid (§4.2) ──────────────────────────────────────────────────────── */
+
+/* Absolutely positioned children, sized in JS. The window renders a viewport
+   plus two screens of overscan and recycles its nodes; `#grid` is only ever as
+   tall as the full result set so the native scrollbar stays honest.
+
+   No padding either: absolutely positioned children are placed against the
+   padding box, so the insets live in the layout maths in app.js. One place
+   knows the grid geometry rather than two that have to agree. */
+#grid { position: relative; padding: 0; }
+
+.tile {
+  position: absolute;
+  border: 0;
+  padding: 0;
+  background: var(--bg-sunken);
+  border-radius: var(--r-tile);
+  overflow: hidden;
+  cursor: pointer;
+  /* transform and opacity only. Never layout properties. */
+  transition: transform var(--d-instant) var(--ease-out);
+  contain: strict;
+}
+
+.tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity var(--d-quick) linear;
+}
+.tile img.ready { opacity: 1; }
+
+.tile:hover { transform: scale(1.03); z-index: 1; }
+
+/* Selected tiles recede, opening a visible gutter around each one: a grid of
+   forty reads instantly as a set, from across the room, with no checkboxes.
+   outline and transform are both compositor-only, so neighbours never move. */
+.tile[aria-selected='true'] {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+  transform: scale(0.94);
+}
+.tile[aria-selected='true']:hover { transform: scale(0.94); }
+
+.tile[data-quarantined='true'] { opacity: 0.55; box-shadow: inset 0 0 0 1px var(--junk); }
+.tile[data-leaving='true'] { transform: scale(0.86); opacity: 0; }
+
+/* Always visible: one glyph, over a short bottom vignette so it survives on a
+   white photograph. Colour alone never carries category, the aria-label and
+   the hover strip both name it in words (§9). */
+.mark {
+  position: absolute;
+  left: 5px;
+  bottom: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.mark[data-group='junk']   { background: var(--junk); }
+.mark[data-group='review'] { background: var(--review); }
+.mark[data-group='keep']   { background: var(--keep); }
+
+/* Protection outranks category: a saved image is no longer being judged. */
+.tile[data-saved='true'] .mark {
+  width: 13px; height: 13px;
+  left: 4px; bottom: 3px;
+  border-radius: 0;
+  background: var(--keep);
+  clip-path: polygon(50% 0, 100% 22%, 100% 62%, 50% 100%, 0 62%, 0 22%);
+}
+
+.vignette {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 34%;
+  background: linear-gradient(transparent, oklch(0% 0 0 / 0.72));
+  pointer-events: none;
+}
+
+/* The numbers arrive exactly when the cursor commits to an image, which is
+   also how S and F pick their target. A gradient, never a blurred panel. */
+.strip {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 10px 5px 3px 16px;
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: oklch(100% 0 0);
+  text-align: right;
+  opacity: 0;
+  transition: opacity var(--d-instant) linear;
+  pointer-events: none;
+}
+.tile:hover .strip { opacity: 1; }
+body[data-density='L'] .strip { opacity: 1; }
+
+/* ── Selection bar (§5) ───────────────────────────────────────────────── */
+
+/* Centred because it is transient and must be found instantly. Nothing else
+   in the layout is centred. */
+#selbar {
+  position: fixed;
+  z-index: 20;
+  bottom: var(--s4);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  max-width: calc(100vw - var(--s5));
+  transform: translate(-50%, 12px);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform var(--d-quick) var(--ease-out),
+    opacity var(--d-quick) var(--ease-out),
+    visibility 0s linear var(--d-quick);
+}
+#selbar[data-open='true'] {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  visibility: visible;
+  /* Exits are faster than entrances: the user has already decided. */
+  transition-duration: var(--d-quick), var(--d-quick), 0s;
+  transition-delay: 0s;
+}
+
+#selcount { white-space: nowrap; }
+/* When the selection reaches past the viewport, the count itself changes
+   colour, so the wider blast radius is unmissable at the moment D is pressed. */
+#selcount[data-extended='true'] { color: var(--junk); font-weight: 560; }
+
+#selbar a.escalate {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+#selbar .msg { color: var(--junk); font-size: var(--t-micro); }
+
+/* ── Lightbox (§2.3) ──────────────────────────────────────────────────── */
+
+#lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  place-items: center;
+  background: oklch(0% 0 0 / 0.72);
+  padding: var(--s5);
+}
+#lightbox[data-open='true'] { display: grid; }
+#lightbox img {
+  max-width: 100%;
+  max-height: calc(100vh - 140px);
+  border-radius: var(--r-glass);
+  object-fit: contain;
+}
+#lightbox .caption {
+  position: fixed;
+  bottom: var(--s4);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--s2) var(--s4);
+  text-align: center;
+}
+#lightbox .caption b { font-size: var(--t-title); font-weight: 620; letter-spacing: -0.015em; }
+#lightbox .caption div { color: var(--ink-quiet); font-size: var(--t-micro); }
+
+/* ── Review mode (§4.5) ───────────────────────────────────────────────── */
+
+/* A destination, not an overlay. Dropping the translucency is what signals the
+   change of activity, and it removes the blur cost while large images are up. */
+body[data-view='review'] { background: var(--bg-sunken); }
+body[data-view='review'] #toolbar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--bg);
+  box-shadow: none;
+}
+
+#review { display: none; padding: calc(var(--toolbar-h) + var(--s4)) var(--s4) var(--s5); }
+body[data-view='review'] #review { display: block; }
+body[data-view='review'] #grid { display: none; }
+
+#review .sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--s4);
+}
+
+.card { display: flex; flex-direction: column; gap: var(--s1); cursor: pointer; }
+/* contain, not cover: cropping to a square is exactly how you miss that the
+   "screenshot" is a photograph of a whiteboard. */
+.card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: oklch(9% 0.006 247);
+  border-radius: var(--r-tile);
+}
+.card[aria-selected='true'] img { outline: 3px solid var(--accent); outline-offset: -3px; }
+.card .bar { height: 2px; border-radius: 1px; background: var(--ink-quiet); }
+.card .meta { font-size: var(--t-micro); color: var(--ink-quiet); }
+.card .meta b { color: var(--ink); font-weight: 560; }
+
+/* Scrolling to where the bars visibly shorten takes the user to the decision
+   boundary without reading a single number. */
+.rule {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  color: var(--junk);
+  font-size: var(--t-micro);
+  letter-spacing: 0.02em;
+  margin: var(--s3) 0;
+}
+.rule::before, .rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: oklch(68% 0.15 42 / 0.4);
+}
+
+#review .head { display: flex; align-items: baseline; gap: var(--s3); margin-bottom: var(--s4); }
+#review .head b { font-size: var(--t-title); font-weight: 620; letter-spacing: -0.015em; }
+#review .head span { color: var(--ink-quiet); }
+
+/* ── Empty states and the shortcut sheet ──────────────────────────────── */
+
+#empty {
+  position: fixed;
+  inset: var(--toolbar-h) 0 0 0;
+  display: none;
+  place-content: center;
+  text-align: center;
+  padding: var(--s5);
+  pointer-events: none;
+}
+#empty[data-open='true'] { display: grid; }
+#empty b { font-size: var(--t-title); font-weight: 620; letter-spacing: -0.015em; }
+#empty p { color: var(--ink-quiet); max-width: 46ch; margin: var(--s2) auto 0; }
+#empty code {
+  background: var(--accent-quiet);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+#help {
+  position: fixed;
+  z-index: 30;
+  inset: auto auto var(--s4) var(--s4);
+  display: none;
+  padding: var(--s4);
+  min-width: 280px;
+}
+#help[data-open='true'] { display: block; }
+#help dl { display: grid; grid-template-columns: auto 1fr; gap: var(--s1) var(--s3); }
+#help dt {
+  font-size: var(--t-micro);
+  color: var(--ink);
+  background: var(--accent-quiet);
+  border-radius: 5px;
+  padding: 1px 6px;
+  text-align: center;
+}
+#help dd { color: var(--ink-quiet); }
+
+/* ── Accessibility fallbacks (§9) ─────────────────────────────────────── */
+
+/* The layout must not shift when transparency is dropped, so only the
+   material changes, never the geometry. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .glass::before { display: none; }
+}
+
+/* Transforms and staggers go; opacity crossfades stay, because state changes
+   still have to be legible. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: var(--d-instant) !important;
+    animation: none !important;
+  }
+  .tile:hover, .tile[aria-selected='true'] { transform: none; }
+  .tile[aria-selected='true'] { outline-offset: -3px; }
+  #selbar, #selbar[data-open='true'] { transform: translate(-50%, 0); }
+}
