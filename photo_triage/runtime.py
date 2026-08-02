@@ -82,17 +82,36 @@ class Backend:
 def detect_backend() -> Backend:
     """What this machine can accelerate with. Cheap, and never raises.
 
-    Looks at the hardware rather than at what happens to be installed, so it
-    gives the same answer before and after an install and can therefore be used
-    to notice a mismatch.
+    A GPU always wins when one is present, because the difference is not a
+    tuning detail: the same folder takes 78 seconds on a Radeon and over
+    twenty minutes on the CPU. CPU is the answer only when there is nothing
+    else, never a cautious default.
+
+    Detection looks at the hardware rather than at what happens to be
+    installed, so it gives the same answer before and after an install and can
+    therefore be used to notice a mismatch. The kernel is asked directly rather
+    than only looking for vendor tools, since a working card with no
+    `nvidia-smi` on PATH is common and would otherwise be missed.
     """
     if sys.platform == "darwin" and platform.machine() == "arm64":
         return Backend("mps", "Apple Silicon")
-    if shutil.which("nvidia-smi"):
-        return Backend("cuda", "nvidia-smi is present")
+    nvidia = _nvidia_evidence()
+    if nvidia:
+        return Backend("cuda", nvidia)
     if Path("/sys/module/amdgpu").exists() and _any_render_node():
         return Backend("rocm", "the amdgpu kernel driver is loaded")
     return Backend("cpu", "no supported GPU found")
+
+
+def _nvidia_evidence() -> str:
+    """Why we think there is an NVIDIA GPU here, or "" if we do not."""
+    if Path("/proc/driver/nvidia/version").exists():
+        return "the nvidia kernel driver is loaded"
+    if any(Path("/dev").glob("nvidia[0-9]*")):
+        return "an nvidia device node is present"
+    if shutil.which("nvidia-smi"):
+        return "nvidia-smi is present"
+    return ""
 
 
 def installed_backend() -> str | None:
@@ -143,6 +162,24 @@ def ensure_model_runtime(assume_yes: bool = False) -> bool:
         return True
 
     missing = "PyTorch and open_clip are" if present is None else "open_clip is"
+
+    if _is_frozen():
+        # A standalone build has no environment to install into, so it keeps
+        # its own beside itself. This is the first-run path for anyone who
+        # downloaded a binary rather than installing a package.
+        print(
+            f"\n{missing} not installed yet. They are what reads the images.\n"
+            f"Detected: {wanted.name} ({wanted.why})\n"
+            f"About to download the {wanted.name} build of PyTorch, which is "
+            f"a few hundred megabytes and happens once.\n",
+            file=sys.stderr,
+        )
+        if not assume_yes and not _confirm():
+            print("Skipped. Re-run when you want to embed.", file=sys.stderr)
+            return False
+        if not _install_into_prefix(wanted):
+            return False
+        return installed_backend() is not None and _has_open_clip()
 
     if _externally_managed():
         # A distribution-managed Python is not ours to install into. Installing
@@ -198,6 +235,71 @@ def _installer(executable: str | None = None) -> list[str]:
     if shutil.which("uv") and os.environ.get("VIRTUAL_ENV"):
         return ["uv", "pip", "install", "--python", python]
     return [python, "-m", "pip", "install"]
+
+
+def bundled_prefix() -> Path:
+    """Where a standalone build keeps the model runtime it installs for itself.
+
+    Keyed on the interpreter version, because the wheels it holds are compiled
+    against one ABI and a build of photo-triage frozen against a different
+    Python must not load them.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    return base / "photo-triage" / f"runtime-py{version}"
+
+
+def activate_bundled_runtime() -> None:
+    """Put a previously installed model runtime on the import path.
+
+    Called once at startup before anything can import torch. Cheap and
+    idempotent, and a no-op for a normal pip install, where the prefix does not
+    exist and site-packages already has everything.
+    """
+    prefix = bundled_prefix()
+    if prefix.is_dir() and str(prefix) not in sys.path:
+        sys.path.insert(0, str(prefix))
+
+
+def _is_frozen() -> bool:
+    """True inside a PyInstaller build, which has no environment to install to."""
+    return getattr(sys, "frozen", False)
+
+
+def _install_into_prefix(backend: Backend) -> bool:
+    """Install the model runtime beside the binary rather than into a venv.
+
+    A standalone build carries its own interpreter and has no site-packages
+    anyone would want written to, so the wheels go in a versioned cache
+    directory that `activate_bundled_runtime` adds to the path. Deleting that
+    directory undoes this completely.
+
+    pip is driven in-process because there is no interpreter on PATH to run it
+    with. It resolves against the interpreter it is running inside, which is
+    the frozen one, so the ABI of what it downloads matches by construction.
+    """
+    prefix = bundled_prefix()
+    prefix.mkdir(parents=True, exist_ok=True)
+    try:
+        from pip._internal.cli.main import main as pip_main
+    except ImportError:
+        log.error("this build has no bundled pip; install PyTorch yourself")
+        return False
+
+    args = ["install", "--upgrade", "--target", str(prefix)]
+    if backend.index_url:
+        args += ["--index-url", backend.index_url]
+    args += backend.packages
+    print(f"Installing into {prefix}\n", file=sys.stderr)
+    if pip_main(args) != 0:
+        return False
+    activate_bundled_runtime()
+    return True
 
 
 def _externally_managed() -> bool:

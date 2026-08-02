@@ -23,7 +23,7 @@ from .library import Library
 from .pipeline import STAGES, Build
 from .prompts import write_default_categories
 from .quarantine import Quarantine
-from .runtime import ensure_model_runtime
+from .runtime import activate_bundled_runtime, ensure_model_runtime
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,10 @@ HOST = "127.0.0.1"  # never configurable; see server.py.
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before anything can import torch: a standalone build keeps its model
+    # runtime in a cache directory rather than in site-packages, and this is
+    # what makes it importable.
+    activate_bundled_runtime()
     args = _parse(argv or sys.argv[1:])
     _configure_logging(args.verbose)
     root = Path(args.folder).expanduser().resolve()

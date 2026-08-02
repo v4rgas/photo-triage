@@ -20,3 +20,5 @@ packaging/src/
 packaging/pkg/
 packaging/*.pkg.tar.zst
 packaging/*.tar.gz
+packaging/build/
+packaging/dist/

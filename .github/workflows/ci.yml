@@ -1,0 +1,57 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.11', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        # No PyTorch anywhere in CI. The suite deliberately does not need it,
+        # which is worth keeping true: if a test ever starts requiring the
+        # model, this job is where it gets caught rather than in a release.
+        run: uv pip install --system -e . pytest
+
+      - name: Test
+        run: python -m pytest -q
+
+  package:
+    # A PKGBUILD that no longer builds is worse than no PKGBUILD, and it fails
+    # quietly because nobody runs makepkg until they want to publish.
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git python-build python-installer \
+            python-wheel python-hatchling python-pytest python-flask \
+            python-pillow python-numpy python-av
+          useradd -m builder
+          chown -R builder .
+
+      - name: makepkg
+        # Skips the checksum, since a PKGBUILD on a branch points at a release
+        # tarball that may not exist yet. --nocheck because python-imagehash is
+        # an AUR package and the tests import it.
+        run: |
+          su builder -c 'cd packaging && makepkg --nodeps --skipchecksums \
+            --nocheck --noconfirm -f'
+          ls -lh packaging/*.pkg.tar.zst

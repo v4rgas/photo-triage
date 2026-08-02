@@ -97,6 +97,21 @@ depends because the choice is yours: `python-pytorch-rocm` for AMD,
 install into a distribution-managed Python behind your back; it tells you what
 is missing and stops.
 
+### A single downloadable binary
+
+Grab `photo-triage-linux-x86_64`, `-macos-arm64`, `-macos-x86_64` or
+`-windows-x86_64.exe` from the
+[latest release](https://github.com/v4rgas/photo-triage/releases/latest), make
+it executable, and run it. It needs no Python.
+
+About 100 MB, because it carries its own interpreter, ffmpeg and the UI. It
+does not carry PyTorch: that would mean choosing your accelerator for you, and
+the wrong choice is either 2.5 GB of CUDA a Radeon cannot use or a CPU build
+running twenty times slower than your machine can. So on the first run that
+actually needs to read images it looks at your hardware, prefers your GPU, and
+downloads the matching build into `~/.cache/photo-triage/`. Delete that folder
+to undo it.
+
 ### Anywhere else
 
 The command at the top is the whole install. On first run, and only when it actually
