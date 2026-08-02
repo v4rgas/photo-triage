@@ -1,13 +1,18 @@
 # photo-triage
 
-Point it at a folder of images. It embeds every one with CLIP on your own GPU,
-then gives you a browser UI where you can search your photos in plain English,
-select in bulk, and move the rubbish into a quarantine folder that mirrors your
-original structure.
+I switched phones, and WhatsApp handed over a folder with thousands of images
+in it. Most of them were memes, screenshots and forwarded shop listings. A few
+hundred were photographs of people I actually care about, and there was nothing
+in the filenames to tell me which was which.
+
+This is what I wrote to sort that out. Point it at the folder and it embeds
+every image with CLIP on your own GPU, then gives you a browser UI where you
+can search your photos by describing them, select in bulk, and move the rubbish
+into a quarantine folder that mirrors your original structure.
 
 It never talks to the network. There is no account, no API key and no upload
-step, and the UI works with the wifi off, because the whole premise is that
-your photographs stay on your machine.
+step, and the UI works with the wifi off, because these are my photographs and
+they stay on my machine.
 
 ```bash
 uv pip install -e .
@@ -19,21 +24,20 @@ photo-triage ~/whatsapp-export
 
 *44 seconds, real time. [Full resolution](docs/demo.mp4).*
 
-## The problem
+## Why it works this way
 
-A phone backup folder holds 20 GB of images. Half of it is memes, screenshots,
-stickers, forwarded promotions and shop listings. The other half are
-photographs you would be upset to lose.
+The obvious approaches all fail on a WhatsApp export, and it is worth knowing
+why before trusting this one.
 
-Nothing in the files tells you which is which. Messaging apps strip EXIF on
-send, so in a real 23,584-image corpus only 2.5% still had camera metadata.
-Filenames like `IMG-20240512-WA0158.jpg` record when something was
-transmitted, not what it shows. Memes and photographs overlap completely on
-file size and dimensions.
+Messaging apps strip EXIF on send. Across 23,584 images from a real export,
+only 2.5% still carried camera metadata, so there is no date or device to sort
+by. Filenames like `IMG-20240512-WA0158.jpg` record when something was
+forwarded to you, not what is in it. Memes and photographs overlap completely
+on file size and dimensions. Perceptual-hash deduplication, which does work,
+only found 3.6% redundancy, so it trims the pile rather than sorting it.
 
-So you either look at 24,000 images yourself, or you write rules that turn out
-not to exist. What is left is the picture itself, which is the thing this tool
-reads.
+That leaves the picture itself. CLIP reads every image once, and after that
+every question you can ask is arithmetic on the cached result.
 
 ## What you can do with it
 
@@ -184,10 +188,12 @@ cartoon mural comes back as `sticker_art` at 0.99. The confident mistakes are
 the dangerous ones, precisely because a confident answer is the one a person
 stops checking.
 
-This is not hypothetical. The prototype this was rebuilt from deleted 21,488 of
-23,584 images, including 1,617 of 2,454 photos of people and 1,209 of 1,239
-photos of animals. Two images pulled from the bin at random afterwards were a
-child in a football kit and three friends laughing at a party.
+This is not hypothetical, and it is the reason the tool is shaped the way it
+is. My first attempt at this had a fast grid and a one-key delete, and I used
+it to remove 21,488 of my 23,584 images. That included 1,617 of the 2,454
+photos of people and 1,209 of the 1,239 photos of animals. Two I pulled back
+out of the bin at random were a child in a football kit and three friends
+laughing at a party. The model had been confident about both.
 
 So this version is built the other way round:
 
