@@ -23,7 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .cache import Cache, ImageRecord, Scores
+from .cache import Cache, MediaRecord, Scores, segment_count, segment_spans
+from .embed import row_vectors
 from .prompts import GUESSING_BELOW, group_of
 from .quarantine import ACTIVE, Quarantine
 
@@ -72,6 +73,8 @@ class Tile:
     saved: bool
     quarantined: bool
     error: str | None
+    duration: float          # 0.0 for a photograph, seconds for a clip
+    moments: int             # how many sampled frames back its score
 
 
 @dataclass
@@ -102,8 +105,13 @@ class Library:
 
     def __init__(self, cache: Cache, encode_text=None):
         self.cache = cache
-        self.records: list[ImageRecord] = cache.load_index()
-        self.embeds: np.ndarray = cache.load_embeddings(len(self.records))
+        self.records: list[MediaRecord] = cache.load_index()
+        # `embeds` is indexed by segment; `spans` maps a row to its slice of
+        # it, and `row_vectors` is the per-row mean for questions about an
+        # item as a whole rather than about its best moment.
+        self.spans = segment_spans(self.records)
+        self.embeds: np.ndarray = cache.load_embeddings(segment_count(self.records))
+        self.row_vectors: np.ndarray = row_vectors(self.embeds, self.records)
         self.scores: Scores = cache.load_scores(len(self.records))
         self.where = Quarantine(cache, self.records)
         self.encode_text = encode_text
@@ -165,6 +173,8 @@ class Library:
             saved=row in self.where.saved,
             quarantined=self.where.state[row] != ACTIVE,
             error=record.error,
+            duration=record.duration,
+            moments=max(1, record.segments) if record.is_video else 0,
         )
 
     def stats(self) -> Stats:
@@ -184,7 +194,7 @@ class Library:
             stats.active += active
             stats.quarantined += not active
             stats.unreadable += not record.readable
-            stats.embedded += bool(self.embeds[row].any())
+            stats.embedded += bool(self.row_vectors[row].any())
             if not active:
                 continue
             category = self.scores.category[row] or "unclassified"
@@ -228,21 +238,39 @@ class Library:
     def _ranking(self, query: Query) -> np.ndarray | None:
         """Cosine similarity of every row against the query, or None if unranked.
 
-        Both sides are L2-normalised, so this is a plain dot product; a row with
-        no embedding scores -1 and therefore sinks rather than being dropped.
+        Both sides are L2-normalised, so this is a plain dot product.
+
+        An item scores as its **best** moment, not its average one. For a
+        photograph, which owns one vector, those are the same number. For a
+        video they are not, and the difference is the whole reason a clip is
+        stored as several vectors: a search for `birthday cake` should find the
+        clip that has a cake in it somewhere, and averaging that moment
+        together with the drive home points the result at neither.
+
+        A row with nothing embedded scores -1, so it sinks rather than being
+        dropped: an unranked item is still a match for the filters.
         """
         vector = None
         if query.like is not None and 0 <= query.like < len(self.records):
-            vector = self.embeds[query.like]
-            if not vector.any():
-                vector = None
+            # "More like this" compares against the gist of the source item,
+            # so asking for more like a whole clip means its overall subject
+            # rather than whichever moment happens to match best.
+            candidate = self.row_vectors[query.like]
+            vector = candidate if candidate.any() else None
         elif query.text.strip() and self.encode_text is not None:
             vector = self.encode_text(query.text.strip())
         if vector is None:
             return None
-        similarity = self.embeds @ vector
-        similarity[~self.embeds.any(axis=1)] = -1.0
-        return similarity
+
+        per_segment = self.embeds @ vector
+        per_segment[~self.embeds.any(axis=1)] = -1.0
+        return np.array(
+            [
+                per_segment[start:stop].max() if stop > start else -1.0
+                for start, stop in self.spans
+            ],
+            dtype=np.float32,
+        )
 
 
 def _folder_of(rel: str) -> str:

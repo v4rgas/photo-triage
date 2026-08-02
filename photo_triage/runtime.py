@@ -143,6 +143,23 @@ def ensure_model_runtime(assume_yes: bool = False) -> bool:
         return True
 
     missing = "PyTorch and open_clip are" if present is None else "open_clip is"
+
+    if _externally_managed():
+        # A distribution-managed Python is not ours to install into. Installing
+        # here would either fail on PEP 668 or, worse, succeed and shadow the
+        # distribution's own build with one that does not match its drivers.
+        print(
+            f"\n{missing} not installed. They are what reads the images.\n"
+            f"Detected: {wanted.name} ({wanted.why})\n"
+            f"This Python is managed by your distribution, so photo-triage will "
+            f"not install into it. Either:\n"
+            f"  {_distro_hint(wanted)}\n"
+            f"  or run photo-triage from a virtualenv, where it installs them "
+            f"itself.\n",
+            file=sys.stderr,
+        )
+        return False
+
     print(
         f"\n{missing} not installed yet. They are what reads the images.\n"
         f"Detected: {wanted.name} ({wanted.why})\n"
@@ -181,6 +198,33 @@ def _installer(executable: str | None = None) -> list[str]:
     if shutil.which("uv") and os.environ.get("VIRTUAL_ENV"):
         return ["uv", "pip", "install", "--python", python]
     return [python, "-m", "pip", "install"]
+
+
+def _externally_managed() -> bool:
+    """True if this interpreter belongs to a distribution rather than to us.
+
+    PEP 668 marks such an install with a file next to the standard library.
+    A virtualenv is ours whatever it was built from, so an active one always
+    wins over the marker.
+    """
+    if os.environ.get("VIRTUAL_ENV") or sys.prefix != sys.base_prefix:
+        return False
+    import sysconfig
+
+    return Path(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED").exists()
+
+
+def _distro_hint(backend: Backend) -> str:
+    """The package-manager line to suggest, for distributions we recognise."""
+    torch_package = {
+        "rocm": "python-pytorch-rocm",
+        "cuda": "python-pytorch-cuda",
+    }.get(backend.name, "python-pytorch")
+    if shutil.which("pacman"):
+        return f"install {torch_package} and python-open-clip-torch (AUR)"
+    if shutil.which("apt-get"):
+        return "install python3-torch and python3-open-clip via apt"
+    return f"install {torch_package} and open_clip with your package manager"
 
 
 def _has_open_clip() -> bool:

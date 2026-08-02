@@ -6,9 +6,9 @@ hundred were photographs of people I actually care about, and there was nothing
 in the filenames to tell me which was which.
 
 This is what I wrote to sort that out. Point it at the folder and it embeds
-every image with CLIP on your own GPU, then gives you a browser UI where you
-can search your photos by describing them, select in bulk, and move the rubbish
-into a quarantine folder that mirrors your original structure.
+every image and video with CLIP on your own GPU, then gives you a browser UI
+where you can search them by describing them, select in bulk, and move the
+rubbish into a quarantine folder that mirrors your original structure.
 
 It never talks to the network. There is no account, no API key and no upload
 step, and the UI works with the wifi off, because these are my photographs and
@@ -51,6 +51,15 @@ chess memes.
 Press `F` on any photo to rank the whole folder by how much it looks like that
 one. This is how you clear a meme and every re-send of it in one sweep.
 
+Videos are searched the same way. A clip is sampled about once every two
+seconds and every sampled moment is embedded and kept, so a search for
+`birthday cake` finds the clip that has a cake in the middle of it. Averaging
+those moments into one vector is the obvious shortcut and it throws away the
+thing you were looking for: a clip that starts at a party and ends in the car
+averages to something that matches neither. What it cannot do is hear. A video
+that matters because of what someone says will not turn up, since CLIP only
+looks.
+
 Zero-shot classification sorts everything into categories, grouped as junk,
 review and keep. The prompts live in an editable `prompts.json`, and
 re-running classification with better ones takes seconds, because the
@@ -69,7 +78,22 @@ batch can be restored, not only the most recent.
 
 ## Install
 
-The command above is the whole install. On first run, and only when it actually
+### Arch Linux
+
+```bash
+paru -S photo-triage          # or yay, or makepkg from packaging/PKGBUILD
+```
+
+The package pulls in everything except PyTorch and CLIP, which are optional
+depends because the choice is yours: `python-pytorch-rocm` for AMD,
+`python-pytorch-cuda` for NVIDIA, plain `python-pytorch` for neither, plus
+`python-open-clip-torch` alongside whichever you pick. photo-triage will not
+install into a distribution-managed Python behind your back; it tells you what
+is missing and stops.
+
+### Anywhere else
+
+The command at the top is the whole install. On first run, and only when it actually
 needs to read images, photo-triage works out what accelerator you have, tells
 you the exact command it is about to run, and installs the matching PyTorch
 wheel:
@@ -88,7 +112,9 @@ gives you an install that works and runs twenty times slower than your hardware
 can. That is why `torch` is not a declared dependency here: a resolver would
 pick the wrong one before any of this code could run, and would overwrite a
 correct GPU build you had installed by hand. Pass `--yes` to skip the prompt,
-or install it yourself and photo-triage will leave it alone.
+or install it yourself and photo-triage will leave it alone. In a
+distribution-managed Python, such as a system install on Arch or Debian, it
+never installs anything and prints your package manager's command instead.
 
 The CUDA and ROCm wheels bundle their own runtime, so there is no system
 toolkit and no sudo involved. On AMD you need the `amdgpu` kernel driver and
@@ -137,6 +163,11 @@ photo-triage restore-all <folder>
 Every stage is resumable and idempotent, keyed on path, size and mtime. Add
 more photos and re-run, and it embeds only the new ones.
 
+Video needs `python-av`, which is installed with everything else and carries
+its own ffmpeg. A photograph owns one vector in the cache and a clip owns one
+per sampled moment, which is why `embeds.npy` has more rows than you have
+files.
+
 ## Keyboard
 
 | Key | Action |
@@ -147,7 +178,7 @@ more photos and re-run, and it embeds only the new ones.
 | `C` | clear selection |
 | `U` | undo the last quarantine batch |
 | `R` | restore, in the quarantine view |
-| `F` | find visually similar to the photo under the cursor |
+| `F` | find visually similar to the photo or clip under the cursor |
 | `?` | shortcuts, `Esc` closes |
 
 With nothing selected, `S` and `F` act on whatever the cursor is over, so you
@@ -162,7 +193,7 @@ tool has left no trace.
 ```
 .phototriage/
 ├── index.jsonl     # per-file metadata and perceptual hashes
-├── embeds.npy      # N x 512 float32, L2-normalised
+├── embeds.npy      # float32, L2-normalised, one row per sampled moment
 ├── paths.json      # row id to relative path
 ├── scored.json     # category and confidence per row
 ├── prompts.json    # editable category prompts

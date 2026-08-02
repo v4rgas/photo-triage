@@ -38,6 +38,10 @@ def classify(
 ) -> Scores:
     """Classify every embedded row and persist the result.
 
+    `embeds` here is one vector per row rather than per segment: a clip is
+    classified on its overall gist, which is the one question where averaging
+    a video's moments is the right thing to do.
+
     Rows with no embedding -- unreadable files, or files added since the last
     embed pass -- come back with an empty category rather than being forced
     into the nearest one.

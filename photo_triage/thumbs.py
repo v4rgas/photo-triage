@@ -17,10 +17,12 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
-from .cache import Cache, ImageRecord
+from .cache import Cache, MediaRecord, segment_spans
 from .quarantine import Quarantine
+from .video import sample
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +32,8 @@ _QUALITY = 82
 
 def build_thumbnails(
     cache: Cache,
-    records: list[ImageRecord],
+    records: list[MediaRecord],
+    embeds: np.ndarray | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> int:
     """Generate any thumbnail that does not exist yet. Returns how many it made.
@@ -42,11 +45,16 @@ def build_thumbnails(
     """
     cache.thumbs_dir.mkdir(parents=True, exist_ok=True)
     where = Quarantine(cache, records)
-    todo = [
-        (row, where.location(row))
-        for row, record in enumerate(records)
-        if record.readable and not cache.thumb_path(row).exists()
-    ]
+    spans = segment_spans(records)
+    todo = []
+    for row, record in enumerate(records):
+        if not record.readable or cache.thumb_path(row).exists():
+            continue
+        key = None
+        if record.is_video and embeds is not None:
+            start, stop = spans[row]
+            key = embeds[start:stop]
+        todo.append((row, where.location(row), key))
     if not todo:
         if progress:
             progress(0, 0)
@@ -55,7 +63,7 @@ def build_thumbnails(
     made = 0
     with ThreadPoolExecutor() as pool:
         for ok in pool.map(
-            lambda item: _render(item[1], cache.thumb_path(item[0])), todo
+            lambda item: _render(item[1], cache.thumb_path(item[0]), item[2]), todo
         ):
             made += ok
             if progress:
@@ -64,17 +72,42 @@ def build_thumbnails(
     return made
 
 
-def _render(source: Path, target: Path) -> bool:
-    """Write one thumbnail. False if the source could not be read."""
+def _render(source: Path, target: Path, key: np.ndarray | None = None) -> bool:
+    """Write one thumbnail. False if the source could not be read.
+
+    For a video, `key` is that clip's segment vectors, and the frame chosen is
+    the one closest to their mean: the most representative moment of the clip
+    rather than whatever happened to be on screen first. Phone videos very
+    often open on a black or still-focusing frame, so frame zero is close to
+    the worst possible choice and costs nothing extra to avoid.
+    """
     try:
-        with Image.open(source) as im:
-            if getattr(im, "n_frames", 1) > 1:
-                im.seek(0)
-            im = im.convert("RGB")
-            im.thumbnail((THUMB_PX, THUMB_PX), Image.Resampling.LANCZOS)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            im.save(target, "JPEG", quality=_QUALITY, optimize=True)
+        picture = _pick_frame(source, key)
+        if picture is None:
+            return False
+        picture = picture.convert("RGB")
+        picture.thumbnail((THUMB_PX, THUMB_PX), Image.Resampling.LANCZOS)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        picture.save(target, "JPEG", quality=_QUALITY, optimize=True)
         return True
     except Exception as exc:
         log.debug("no thumbnail for %s: %s", source, exc)
         return False
+
+
+def _pick_frame(source: Path, key: np.ndarray | None) -> Image.Image | None:
+    if key is None:
+        with Image.open(source) as im:
+            if getattr(im, "n_frames", 1) > 1:
+                im.seek(0)
+            return im.convert("RGB")
+
+    frames = sample(source, len(key))
+    if not frames:
+        return None
+    usable = min(len(frames), len(key))
+    vectors = key[:usable]
+    if not vectors.any():
+        return frames[usable // 2]
+    mean = vectors.mean(axis=0)
+    return frames[int(np.argmax(vectors[:usable] @ mean))]

@@ -22,8 +22,8 @@ from pathlib import Path
 from . import classify as classify_stage
 from . import scan as scan_stage
 from . import thumbs as thumbs_stage
-from .cache import Cache
-from .embed import Device, Embedder, embed, pick_device
+from .cache import Cache, segment_count
+from .embed import Device, Embedder, embed, pick_device, row_vectors
 
 log = logging.getLogger(__name__)
 
@@ -104,14 +104,17 @@ class Build:
                     self.cache, records, self._model(), self._reporter("embed")
                 )
             else:
-                embeds = self.cache.load_embeddings(len(records))
+                embeds = self.cache.load_embeddings(segment_count(records))
             if "classify" in self.stages:
                 classify_stage.classify(
-                    self.cache, embeds, self._model(), self._reporter("classify")
+                    self.cache,
+                    row_vectors(embeds, records),
+                    self._model(),
+                    self._reporter("classify"),
                 )
             if "thumbs" in self.stages:
                 thumbs_stage.build_thumbnails(
-                    self.cache, records, self._reporter("thumbs")
+                    self.cache, records, embeds, self._reporter("thumbs")
                 )
         except Exception as exc:
             log.exception("build failed during stage %s", self.progress.stage)

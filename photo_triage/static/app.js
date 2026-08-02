@@ -167,6 +167,7 @@ function buildTile(tile, index) {
   node.dataset.index = index;
   node.dataset.saved = tile.saved;
   node.dataset.quarantined = tile.quarantined;
+  node.dataset.video = tile.duration > 0;
   node.setAttribute('role', 'gridcell');
   node.setAttribute('aria-selected', state.selection.has(tile.id));
   node.setAttribute('aria-label', describe(tile));
@@ -191,13 +192,26 @@ function buildTile(tile, index) {
   strip.textContent = stripText(tile);
 
   node.append(img, vignette, mark, strip);
+  if (tile.duration > 0) {
+    /* A still frame of a video looks exactly like a photograph, so the length
+       is the label: it says both "this moves" and how long it runs. */
+    const clock = document.createElement('span');
+    clock.className = 'clock';
+    clock.textContent = clockText(tile.duration);
+    node.appendChild(clock);
+  }
   return node;
 }
 
 const percent = (value) => `${Math.round(value * 100)}%`;
 
+const clockText = (seconds) => {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
 const describe = (tile) =>
-  `${tile.name}, ${tile.category || 'unclassified'}` +
+  `${tile.name}, ${tile.duration > 0 ? 'video, ' : ''}${tile.category || 'unclassified'}` +
   (tile.saved ? ', saved' : '') +
   (tile.quarantined ? ', quarantined' : '');
 
@@ -596,9 +610,22 @@ function openLightbox(id) {
   const tile = state.tiles.find((candidate) => candidate.id === id);
   if (!tile) return;
   state.lightboxOrigin = document.activeElement;
-  $('lightbox-img').src = `/full/${id}`;
+
+  /* Same endpoint either way: /full serves the original bytes, and a browser
+     that can play the container will. */
+  const playing = tile.duration > 0;
+  $('lightbox-img').hidden = playing;
+  $('lightbox-video').hidden = !playing;
+  if (playing) {
+    $('lightbox-video').src = `/full/${id}`;
+    $('lightbox-video').play().catch(() => {});
+  } else {
+    $('lightbox-img').src = `/full/${id}`;
+  }
+
   $('lightbox-name').textContent = tile.name;
   $('lightbox-meta').textContent =
+    `${tile.duration > 0 ? `${clockText(tile.duration)} · ` : ''}` +
     `${tile.category || 'unclassified'} ${percent(tile.confidence)} · ` +
     `${tile.width}×${tile.height}${tile.folder ? ` · ${tile.folder}` : ''}`;
   $('lightbox').dataset.open = 'true';
@@ -608,6 +635,10 @@ function openLightbox(id) {
 function closeLightbox() {
   $('lightbox').dataset.open = 'false';
   $('lightbox-img').removeAttribute('src');
+  const player = $('lightbox-video');
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
   if (state.lightboxOrigin) state.lightboxOrigin.focus();
 }
 
@@ -673,7 +704,11 @@ function start() {
   $('btn-restore').addEventListener('click', restore);
   $('btn-clear').addEventListener('click', clearSelection);
   $('escalate').addEventListener('click', selectAllMatching);
-  $('lightbox').addEventListener('click', closeLightbox);
+  /* Backdrop only. The lightbox now contains a video with its own controls,
+     and closing on any click inside it would make the scrubber unusable. */
+  $('lightbox').addEventListener('click', (event) => {
+    if (event.target === $('lightbox')) closeLightbox();
+  });
   $('search').addEventListener('input', onSearchInput);
   for (const id of ['f-group', 'f-cat', 'f-folder', 'f-show', 'f-view']) {
     $(id).addEventListener('change', () => { state.like = null; reload(); });

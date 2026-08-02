@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .cache import Cache, ImageRecord
+from .cache import Cache, MediaRecord
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class Quarantine:
     reason about whether an action is still applicable.
     """
 
-    def __init__(self, cache: Cache, records: list[ImageRecord]):
+    def __init__(self, cache: Cache, records: list[MediaRecord]):
         self.cache = cache
         self._rel = [r.rel for r in records]
         self.state: list[str] = [ACTIVE] * len(records)

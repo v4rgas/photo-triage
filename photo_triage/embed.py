@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .cache import EMBED_DIM, Cache, ImageRecord
+from .cache import EMBED_DIM, Cache, MediaRecord, segment_count, segment_spans
 from .quarantine import Quarantine
 
 log = logging.getLogger(__name__)
@@ -151,26 +151,30 @@ class Embedder:
 
     def images(
         self,
-        paths: list[Path],
+        frames: list["Frame"],
         progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
-        """Encode image files into a len(paths) x 512 matrix, in order.
+        """Encode frames into a len(frames) x 512 matrix, in order.
 
-        A file that cannot be decoded yields an all-zero row rather than an
-        exception, matching the convention that zero means "no embedding" --
+        A frame is a file and, for video, which moment of it to take. Whether
+        a picture came out of a JPEG or out of the middle of a clip makes no
+        difference past this point.
+
+        Anything that cannot be decoded yields an all-zero row rather than an
+        exception, matching the convention that zero means "no embedding":
         one bad file among twenty thousand must not end the run.
         """
         from torch.utils.data import DataLoader
 
         batch_size, workers = _TUNING[self.device.torch_device.type]
         loader = DataLoader(
-            _ImageSet(paths, self.preprocess),
+            _FrameSet(frames, self.preprocess),
             batch_size=batch_size,
             num_workers=workers,
             prefetch_factor=4 if workers else None,
             shuffle=False,
         )
-        out = np.zeros((len(paths), EMBED_DIM), dtype=np.float32)
+        out = np.zeros((len(frames), EMBED_DIM), dtype=np.float32)
         done = 0
         with self._torch.no_grad():
             for pixels, offsets, ok in loader:
@@ -183,35 +187,55 @@ class Embedder:
                         out[offset] = vector
                 done += len(offsets)
                 if progress:
-                    progress(done, len(paths))
+                    progress(done, len(frames))
         return out
+
+
+@dataclass
+class Frame:
+    """One picture to encode: a file, and which moment of it to take.
+
+    `moment` is None for a photograph and the index of a sampled frame for a
+    video. Nothing downstream of the decoder cares which it was.
+    """
+
+    path: Path
+    moment: int | None = None
+    of: int = 1
 
 
 def embed(
     cache: Cache,
-    records: list[ImageRecord],
+    records: list[MediaRecord],
     embedder: Embedder,
     progress: Callable[[int, int], None] | None = None,
 ) -> np.ndarray:
-    """Fill in every row that has no vector yet, and persist the matrix.
+    """Fill in every segment that has no vector yet, and persist the matrix.
 
-    Resumable by construction: an all-zero row is one that still needs work, so
-    an interrupted run simply finds fewer rows to do next time. The matrix is
-    flushed periodically during the pass, bounding what a kill can cost to the
-    last few thousand images rather than the whole run.
+    Resumable by construction: an all-zero segment is one that still needs
+    work, so an interrupted run simply finds fewer to do next time. The matrix
+    is flushed periodically during the pass, bounding what a kill can cost to
+    the last few thousand pictures rather than the whole run.
     """
-    embeds = cache.load_embeddings(len(records))
-    todo = [
-        row
-        for row, record in enumerate(records)
-        if record.readable and not embeds[row].any()
-    ]
+    spans = segment_spans(records)
+    embeds = cache.load_embeddings(segment_count(records))
+    where = Quarantine(cache, records)
+
+    todo: list[tuple[int, Frame]] = []
+    for row, record in enumerate(records):
+        if not record.readable:
+            continue
+        start, stop = spans[row]
+        path = where.location(row)
+        for offset in range(start, stop):
+            if not embeds[offset].any():
+                moment = offset - start if record.is_video else None
+                todo.append((offset, Frame(path, moment, stop - start)))
     if not todo:
         if progress:
             progress(0, 0)
         return embeds
 
-    where = Quarantine(cache, records)
     done = 0
     for chunk_start in range(0, len(todo), _FLUSH_EVERY):
         chunk = todo[chunk_start : chunk_start + _FLUSH_EVERY]
@@ -219,41 +243,86 @@ def embed(
         if progress:
             base = done
             chunk_progress = lambda inner, _total: progress(base + inner, len(todo))
-        vectors = embedder.images(
-            [where.location(row) for row in chunk], chunk_progress
-        )
-        for row, vector in zip(chunk, vectors):
-            embeds[row] = vector
+        vectors = embedder.images([frame for _, frame in chunk], chunk_progress)
+        for (offset, _), vector in zip(chunk, vectors):
+            embeds[offset] = vector
         cache.save_embeddings(embeds)
         done += len(chunk)
     return embeds
 
 
+def row_vectors(embeds: np.ndarray, records: list[MediaRecord]) -> np.ndarray:
+    """One vector per row: the mean of its segments, re-normalised.
+
+    This is the "overall gist" view of an item, which is what classification
+    wants. Search deliberately does not use it, because averaging a clip's
+    moments is what loses the moment being searched for.
+    """
+    spans = segment_spans(records)
+    out = np.zeros((len(records), EMBED_DIM), dtype=np.float32)
+    for row, (start, stop) in enumerate(spans):
+        block = embeds[start:stop]
+        filled = block[block.any(axis=1)]
+        if len(filled):
+            mean = filled.mean(axis=0)
+            out[row] = mean / max(float(np.linalg.norm(mean)), 1e-12)
+    return out
+
+
 # -- internals ------------------------------------------------------------
 
 
-class _ImageSet:
-    """Decodes and preprocesses one image per index, for the DataLoader."""
+class _FrameSet:
+    """Decodes and preprocesses one picture per index, for the DataLoader.
 
-    def __init__(self, paths: list[Path], preprocess):
-        self.paths = paths
+    Video is decoded here, in the loader's worker processes, for the same
+    reason stills are: decode is the bottleneck and the GPU starves without
+    enough workers feeding it.
+
+    Each picture is an independent unit of work, so batches stay evenly sized
+    and a half-readable clip still contributes the moments that did decode. To
+    stop that costing a full decode per moment, the frames of the most recent
+    clip are kept. The work list runs in segment order, so consecutive items
+    are the same clip and one remembered entry turns what would be quadratic
+    back into one pass per file.
+    """
+
+    def __init__(self, frames: list, preprocess):
+        self.frames = frames
         self.preprocess = preprocess
+        self._clip_path: Path | None = None
+        self._clip_moments: list = []
 
     def __len__(self) -> int:
-        return len(self.paths)
+        return len(self.frames)
 
     def __getitem__(self, offset: int):
         import torch
         from PIL import Image
 
+        frame = self.frames[offset]
         try:
-            with Image.open(self.paths[offset]) as im:
-                if getattr(im, "n_frames", 1) > 1:
-                    im.seek(0)
-                pixels = self.preprocess(im.convert("RGB"))
+            if frame.moment is None:
+                with Image.open(frame.path) as im:
+                    if getattr(im, "n_frames", 1) > 1:
+                        im.seek(0)
+                    pixels = self.preprocess(im.convert("RGB"))
+            else:
+                moments = self._moments(frame)
+                if frame.moment >= len(moments):
+                    return torch.zeros(3, 224, 224), offset, False
+                pixels = self.preprocess(moments[frame.moment].convert("RGB"))
             return pixels, offset, True
         except Exception:
             return torch.zeros(3, 224, 224), offset, False
+
+    def _moments(self, frame) -> list:
+        if frame.path != self._clip_path:
+            from .video import sample
+
+            self._clip_path = frame.path
+            self._clip_moments = sample(frame.path, frame.of)
+        return self._clip_moments
 
 
 def _l2(tensor):

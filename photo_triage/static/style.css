@@ -325,6 +325,28 @@ select.ghost option { background: var(--bg); color: var(--ink); }
 .tile:hover .strip { opacity: 1; }
 body[data-density='L'] .strip { opacity: 1; }
 
+/* A video's thumbnail is a still frame and reads as a photograph, so the
+   running time carries the distinction. Bottom right, opposite the category
+   dot, over the same vignette that keeps both legible on a white picture. */
+.clock {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: oklch(100% 0 0);
+  pointer-events: none;
+}
+.tile:hover .clock { opacity: 0; }
+
+#lightbox video {
+  max-width: 100%;
+  max-height: calc(100vh - 140px);
+  border-radius: var(--r-glass);
+  background: oklch(9% 0.006 247);
+}
+
 /* ── Selection bar (§5) ───────────────────────────────────────────────── */
 
 /* Centred because it is transient and must be found instantly. Nothing else

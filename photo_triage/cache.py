@@ -7,16 +7,23 @@ filename or a dtype. Change a format here and nowhere else.
 
 The invariant the whole system rests on
 ---------------------------------------
-An image's **row id** is its position in `index.jsonl`, and the same integer is
-its row in `embeds.npy`, its key in `scored.json` and the stem of its
-thumbnail. Rows are only ever appended; a file that disappears from disk keeps
-its row (flagged `missing`) so that nothing downstream shifts underneath the
-matrix. Nothing in this codebase may re-sort one of these structures alone.
+An item's **row id** is its position in `index.jsonl`, and the same integer is
+its key in `scored.json` and the stem of its thumbnail. Rows are only ever
+appended, so nothing downstream shifts underneath the caches, and nothing in
+this codebase may re-sort one of these structures alone.
 
-Not-yet-embedded rows are stored as an all-zero vector. Real embeddings are
-L2-normalised and so can never be all-zero, which means "which rows still need
-work?" is answered by the matrix itself rather than by a second bookkeeping
-file that could disagree with it.
+A row owns a **contiguous span of `embeds.npy`** rather than a single row of
+it. A photograph owns one vector. A video owns one per sampled frame, because
+averaging a clip into a single direction destroys the moment being searched
+for (see video.py). The span is derived by running down `index.jsonl` adding up
+`segments`, so the mapping lives in the same file as the thing it describes and
+there is no second file to fall out of step. For a folder of photographs every
+span has length one and this is exactly the old layout.
+
+Not-yet-embedded segments are stored as an all-zero vector. Real embeddings are
+L2-normalised and so can never be all-zero, which means "what still needs
+work?" is answered by the matrix itself rather than by a bookkeeping file that
+could disagree with it.
 
 Design it twice
 ---------------
@@ -49,11 +56,11 @@ EMBED_DIM = 512  # ViT-B-32 output width; see PROJECT.md 4.
 
 
 @dataclass
-class ImageRecord:
-    """One image as stage 1 found it.
+class MediaRecord:
+    """One photograph or video as stage 1 found it.
 
     `rel` is a POSIX-style path relative to the scan root and is the stable
-    human-facing identity of the image -- it survives quarantine, since the
+    human-facing identity of the item -- it survives quarantine, since the
     quarantine tree mirrors it exactly. `size` and `mtime` come from the file
     as scanned and together with `rel` form the key that makes re-scanning
     incremental.
@@ -61,7 +68,16 @@ class ImageRecord:
     `fmt` is sniffed from the file's magic bytes, not its extension, so a
     `.jpg` that is really a WebP reports `WEBP` (PROJECT.md 9.6).
 
-    `error` is None for a readable image, otherwise a short reason string; such
+    `duration` is 0.0 for a photograph and the clip length in seconds for a
+    video, which is also what distinguishes the two everywhere else.
+    `segments` is how many vectors this item owns in `embeds.npy`: one for a
+    photograph, one per sampled frame for a video.
+
+    Hashes describe a single representative frame, so a video and a still of
+    the same scene are comparable and a re-encoded clip still matches its
+    original.
+
+    `error` is None for a readable item, otherwise a short reason string; such
     a record has no dimensions and no hashes and is never embedded, but it
     still occupies a row so that the row ids of its neighbours never move.
     """
@@ -75,7 +91,13 @@ class ImageRecord:
     phash: str = ""
     dhash: str = ""
     pixel_md5: str = ""
+    duration: float = 0.0
+    segments: int = 1
     error: str | None = None
+
+    @property
+    def is_video(self) -> bool:
+        return self.duration > 0.0
 
     @property
     def key(self) -> tuple[str, int, float]:
@@ -85,6 +107,31 @@ class ImageRecord:
     @property
     def readable(self) -> bool:
         return self.error is None
+
+
+def segment_spans(records: list[MediaRecord]) -> list[tuple[int, int]]:
+    """Each row's half-open span of `embeds.npy`, as (start, stop) per row.
+
+    The single expression of the row-to-vector mapping. It is derived by
+    running down the index rather than stored, so it cannot disagree with the
+    records it describes, and adding a video changes the spans of everything
+    after it without any file needing to be rewritten in step.
+
+    An unreadable row still gets a span, of length one, so that the arithmetic
+    never has a special case and a file that becomes readable later needs no
+    renumbering.
+    """
+    spans, start = [], 0
+    for record in records:
+        width = max(1, record.segments)
+        spans.append((start, start + width))
+        start += width
+    return spans
+
+
+def segment_count(records: list[MediaRecord]) -> int:
+    """How many rows `embeds.npy` needs for this index."""
+    return sum(max(1, record.segments) for record in records)
 
 
 @dataclass
@@ -131,17 +178,17 @@ class Cache:
 
     # -- index ------------------------------------------------------------
 
-    def load_index(self) -> list[ImageRecord]:
+    def load_index(self) -> list[MediaRecord]:
         """Every scanned image, in row order. Empty list if never scanned."""
         if not self._index_path.exists():
             return []
         records = []
         for line in self._index_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                records.append(ImageRecord(**json.loads(line)))
+                records.append(MediaRecord(**json.loads(line)))
         return records
 
-    def save_index(self, records: list[ImageRecord]) -> None:
+    def save_index(self, records: list[MediaRecord]) -> None:
         """Replace the index, and with it the row id -> path map.
 
         Both files are rewritten together because they encode the same fact;
@@ -158,16 +205,17 @@ class Cache:
 
     # -- embeddings -------------------------------------------------------
 
-    def load_embeddings(self, row_count: int) -> np.ndarray:
-        """An `row_count` x 512 float32 matrix of L2-normalised image vectors.
+    def load_embeddings(self, segments: int) -> np.ndarray:
+        """A `segments` x 512 float32 matrix of L2-normalised vectors.
 
-        Rows that have not been embedded yet -- including every row added since
-        the last embed pass -- read back as zeros. A cache that is truncated,
-        the wrong width or otherwise unreadable is treated as partial rather
-        than as corruption: whatever survives is kept and the rest comes back
-        as zeros, so the next embed pass simply refills them.
+        Indexed by segment, not by row; use `segment_spans` to find a row's
+        slice of it. Segments that have not been embedded yet, including every
+        one added since the last pass, read back as zeros. A cache that is
+        truncated, the wrong width or otherwise unreadable is treated as
+        partial rather than as corruption: whatever survives is kept and the
+        rest comes back as zeros, so the next embed pass refills them.
         """
-        blank = np.zeros((row_count, EMBED_DIM), dtype=np.float32)
+        blank = np.zeros((segments, EMBED_DIM), dtype=np.float32)
         if not self._embeds_path.exists():
             return blank
         try:
@@ -178,7 +226,7 @@ class Cache:
         if stored.ndim != 2 or stored.shape[1] != EMBED_DIM:
             log.warning("embeds.npy has shape %s; re-embedding from scratch", stored.shape)
             return blank
-        keep = min(len(stored), row_count)
+        keep = min(len(stored), segments)
         blank[:keep] = stored[:keep].astype(np.float32, copy=False)
         return blank
 

@@ -86,9 +86,17 @@ Five stages. Each writes a cache file; each runs independently and resumably.
    └──────────────┘  → http://127.0.0.1:5000
 ```
 
-**Critical invariant:** `embeds.npy` row *i* corresponds to `paths.json[i]`.
-Every other structure keys off that integer row id. Never re-sort one without
-the other.
+**Critical invariant:** row id *i* is the *i*th line of `index.jsonl`, and the
+same integer keys `paths.json`, `scored.json` and the thumbnails. Every other
+structure keys off that integer row id. Never re-sort one without the other.
+
+A row owns a **contiguous span of `embeds.npy`** rather than one row of it: a
+photograph owns a single vector, a video owns one per sampled frame. The span
+is derived by running down `index.jsonl` summing `segments`, so it cannot fall
+out of step with the index, and for a folder of photographs every span has
+length one and row *i* is still vector *i*. Video search takes the **best**
+segment rather than their mean; see §11.5 and `video.py` for why averaging a
+clip destroys what you were searching for.
 
 ### Measured timings (23,584 images, Ryzen 7 5700G + RX 6700 XT)
 
@@ -696,7 +704,10 @@ Roughly in value order.
    ambiguous cases.
 4. **Blur / quality detection** — variance of Laplacian. Accidental pocket shots
    and out-of-focus frames are junk no semantic model will catch.
-5. **Video support** — embed a few sampled frames, average them.
+5. ~~**Video support**~~ — done. Frames are sampled about every two seconds
+   and each keeps its own vector; a clip scores as its best moment rather than
+   its average, because averaging a multi-scene clip points the result at
+   nothing that is in it. Audio is still not read.
 6. **Bigger model option** — SigLIP or ViT-L/14 for users with VRAM to spare.
 
 ---

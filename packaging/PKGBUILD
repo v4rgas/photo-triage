@@ -1,0 +1,52 @@
+# Maintainer: Juan Vargas <66626747+v4rgas@users.noreply.github.com>
+
+pkgname=photo-triage
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Search a folder of photos and videos by describing what they show, entirely offline"
+arch=('any')
+url="https://github.com/v4rgas/photo-triage"
+license=('MIT')
+
+# PyTorch and open_clip are optional on purpose. Everything except embedding
+# and text search works without them, so browsing, filtering, quarantining and
+# restoring an already-triaged folder need none of the heavy stack. Which
+# PyTorch you want also depends on your hardware, and only you know that.
+depends=(
+  'python'
+  'python-flask'
+  'python-pillow'
+  'python-numpy'
+  'python-imagehash'
+  'python-av'
+)
+optdepends=(
+  'python-pytorch: embedding and text search on the CPU'
+  'python-pytorch-rocm: embedding on an AMD GPU, roughly 20x faster'
+  'python-pytorch-cuda: embedding on an NVIDIA GPU, roughly 20x faster'
+  'python-open-clip-torch: the CLIP model, needed alongside any python-pytorch'
+)
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-hatchling')
+checkdepends=('python-pytest')
+
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  # The suite deliberately does not need PyTorch: only embedding and text
+  # search do, and neither is exercised here.
+  python -m pytest -q
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

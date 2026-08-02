@@ -21,7 +21,8 @@ from pathlib import Path
 
 from PIL import Image, ImageFile
 
-from .cache import CACHE_DIRNAME, Cache, ImageRecord
+from .cache import CACHE_DIRNAME, Cache, MediaRecord
+from .video import looks_like_video, probe, sample, sample_count
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ _HEADER_BYTES = 32
 
 def scan(
     cache: Cache, progress: Callable[[int, int], None] | None = None
-) -> list[ImageRecord]:
+) -> list[MediaRecord]:
     """Index every image under the cache's root and persist the result.
 
     `progress(done, total)` is called as work completes, where `total` counts
@@ -67,7 +68,7 @@ def scan(
         rel = path.relative_to(cache.root).as_posix()
         found.append((rel, stat.st_size, stat.st_mtime))
 
-    fresh: dict[str, ImageRecord] = {}
+    fresh: dict[str, MediaRecord] = {}
     pending: list[tuple[str, int, float]] = []
     for rel, size, mtime in found:
         carried = by_key.get((rel, size, mtime))
@@ -96,10 +97,10 @@ def scan(
 
 
 def _merge(
-    previous: list[ImageRecord],
-    known_rel: dict[str, ImageRecord],
-    fresh: dict[str, ImageRecord],
-) -> list[ImageRecord]:
+    previous: list[MediaRecord],
+    known_rel: dict[str, MediaRecord],
+    fresh: dict[str, MediaRecord],
+) -> list[MediaRecord]:
     """Rebuild the row set, preserving every existing row id.
 
     An existing row is updated if its file was re-inspected and otherwise left
@@ -133,7 +134,11 @@ def _walk_images(root: Path) -> Iterator[Path]:
 
 
 def _sniff(path: Path) -> str | None:
-    """The container format from magic bytes, or None if this is not an image."""
+    """The container format from magic bytes, or None if this is not media.
+
+    Stills and video are both recognised here, from one read of the header, so
+    the walk asks the question once per file.
+    """
     try:
         with open(path, "rb") as fh:
             head = fh.read(_HEADER_BYTES)
@@ -143,38 +148,75 @@ def _sniff(path: Path) -> str | None:
         if head.startswith(magic):
             return fmt
     # RIFF....WEBP -- the four size bytes in between are why this is not a
-    # simple prefix match.
+    # simple prefix match. AVI shares the RIFF prefix, so video is asked last.
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "WEBP"
     if head[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1", b"ftypavif"):
         return "HEIF"
+    if looks_like_video(head):
+        return "VIDEO"
     return None
 
 
-def _inspect(args: tuple[str, str, int, float]) -> ImageRecord:
-    """Decode one image and measure it. Runs in a worker process.
+def _inspect(args: tuple[str, str, int, float]) -> MediaRecord:
+    """Decode one file and measure it. Runs in a worker process.
 
     Any failure becomes an `error` on the record. One unreadable file among
     twenty thousand must never take down the batch, so nothing here raises.
     """
     root, rel, size, mtime = args
-    record = ImageRecord(rel=rel, size=size, mtime=mtime)
+    path = Path(root) / rel
+    record = MediaRecord(rel=rel, size=size, mtime=mtime)
     try:
-        import imagehash
-
-        with Image.open(Path(root) / rel) as im:
-            record.fmt = im.format or ""
-            # Animated GIFs and multi-frame TIFFs: judge the first frame.
-            if getattr(im, "n_frames", 1) > 1:
-                im.seek(0)
-            record.width, record.height = im.size
-            rgb = im.convert("RGB")
-            record.phash = str(imagehash.phash(rgb))
-            record.dhash = str(imagehash.dhash(rgb))
-            # Hash the decoded pixels, not the file: two files can be
-            # pixel-identical yet differ on disk through EXIF or encoder
-            # choice, and comparing file bytes finds none of those.
-            record.pixel_md5 = hashlib.md5(rgb.tobytes()).hexdigest()
+        if _sniff(path) == "VIDEO":
+            _measure_video(path, record)
+        else:
+            _measure_still(path, record)
     except Exception as exc:
         record.error = f"unreadable: {type(exc).__name__}"
     return record
+
+
+def _measure_still(path: Path, record: MediaRecord) -> None:
+    with Image.open(path) as im:
+        record.fmt = im.format or ""
+        # Animated GIFs and multi-frame TIFFs: judge the first frame.
+        if getattr(im, "n_frames", 1) > 1:
+            im.seek(0)
+        record.width, record.height = im.size
+        _hash_frame(im.convert("RGB"), record)
+
+
+def _measure_video(path: Path, record: MediaRecord) -> None:
+    """Measure a clip, and hash one frame of it so dedupe still works.
+
+    The hashed frame is the middle sample rather than the first, because the
+    opening frame of a phone video is very often black and every such video
+    would then hash identically to every other.
+    """
+    info = probe(path)
+    if info is None:
+        record.error = "unreadable: no video stream"
+        return
+    record.fmt = path.suffix.lstrip(".").upper() or "VIDEO"
+    record.width, record.height = info.width, info.height
+    record.duration = info.duration
+    record.segments = sample_count(info.duration)
+
+    frames = sample(path, record.segments)
+    if not frames:
+        record.error = "unreadable: no frames decoded"
+        return
+    record.segments = len(frames)
+    _hash_frame(frames[len(frames) // 2].convert("RGB"), record)
+
+
+def _hash_frame(rgb: Image.Image, record: MediaRecord) -> None:
+    import imagehash
+
+    record.phash = str(imagehash.phash(rgb))
+    record.dhash = str(imagehash.dhash(rgb))
+    # Hash the decoded pixels, not the file: two files can be pixel-identical
+    # yet differ on disk through EXIF or encoder choice, and comparing file
+    # bytes finds none of those.
+    record.pixel_md5 = hashlib.md5(rgb.tobytes()).hexdigest()
