@@ -9,7 +9,12 @@
  * 1. The grid is windowed. `state.tiles` holds every loaded result, but only a
  *    viewport plus two screens of overscan exists in the DOM, and nodes are
  *    recycled as it scrolls. DESIGN.md calls 60fps at 24,000 rows a release
- *    gate, and this is the reason it holds.
+ *    gate, and this is the reason it holds. Two rules keep that true, and both
+ *    are easy to break by accident: a tile that leaves the window is *parked*
+ *    rather than discarded, so scrolling costs no allocation and no thumbnail
+ *    re-decode; and a tile's position is written only when it can actually
+ *    have moved. Scrolling never moves a tile -- the grid is in page
+ *    coordinates -- so a scroll frame writes no geometry at all.
  * 2. Every mutation is optimistic. A triage session is thousands of decisions
  *    and a 40ms round-trip on each is ninety seconds of dead time. The DOM
  *    changes immediately and reconciles with the response; a refusal reverts
@@ -23,6 +28,10 @@ const FLOOR = { S: 96, M: 132, L: 168 };
 const PAGE = 300;
 const OVERSCAN_SCREENS = 2;
 const DEBOUNCE_MS = 120;
+/* Parked tiles kept for reuse. Roughly one window's worth: enough that a
+   reversal of scroll direction never allocates, small enough that the images
+   they still hold cannot accumulate. */
+const POOL_MAX = 240;
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,7 +48,9 @@ const state = {
   fetching: false,
   armed: false,        // the quarantine button is showing its confirmation
   layout: { cols: 1, cell: 0, rowHeight: 0 },
+  geometry: 0,         // bumped whenever laid-out positions become stale
   nodes: new Map(),    // tile index -> live DOM node
+  pool: [],            // detached tiles, ready to be refilled
 };
 
 /* ── talking to the server ─────────────────────────────────────────────── */
@@ -114,6 +125,7 @@ function layout() {
   const cols = Math.max(1, Math.floor((width - 2 * PAD_X + GAP) / (floor + GAP)));
   const cell = (width - 2 * PAD_X - GAP * (cols - 1)) / cols;
   state.layout = { cols, cell, rowHeight: cell + GAP };
+  state.geometry += 1;   /* every placed tile is now in the wrong place */
   const rows = Math.ceil(state.tiles.length / cols);
   $('grid').style.height = `${PAD_TOP + rows * state.layout.rowHeight + PAD_X}px`;
   paint();
@@ -133,22 +145,30 @@ function paint() {
 
   for (const [index, node] of state.nodes) {
     if (index < from || index >= to) {
-      node.remove();
-      state.nodes.delete(index);
+      park(index, node);
     }
   }
   const fragment = document.createDocumentFragment();
   for (let index = from; index < to; index += 1) {
     let node = state.nodes.get(index);
     if (!node) {
-      node = buildTile(state.tiles[index], index);
+      node = state.pool.pop() || blankTile();
+      fillTile(node, state.tiles[index], index);
       state.nodes.set(index, node);
       fragment.appendChild(node);
     }
-    node.style.width = `${cell}px`;
-    node.style.height = `${cell}px`;
-    node.style.left = `${PAD_X + (index % cols) * (cell + GAP)}px`;
-    node.style.top = `${PAD_TOP + Math.floor(index / cols) * rowHeight}px`;
+    /* A scroll does not move anything: tiles are positioned in page
+       coordinates, so their left/top only go stale when the geometry itself
+       changes. Writing them every frame anyway is a style recalculation and a
+       layout for every node in the window, sixty times a second, for values
+       that are already correct. */
+    if (node.geometry !== state.geometry) {
+      node.geometry = state.geometry;
+      node.style.width = `${cell}px`;
+      node.style.height = `${cell}px`;
+      node.style.left = `${PAD_X + (index % cols) * (cell + GAP)}px`;
+      node.style.top = `${PAD_TOP + Math.floor(index / cols) * rowHeight}px`;
+    }
   }
   $('grid').appendChild(fragment);
 
@@ -158,48 +178,78 @@ function paint() {
   if (to > state.tiles.length - PAGE) loadMore();
 }
 
-/* One tile. Category is carried by the dot for scanning and by the label in
-   words for everyone the dot does not work for (DESIGN.md §9). */
-function buildTile(tile, index) {
+/* Detach a tile and keep it for the next index that needs one. Scrolling a
+   long grid otherwise builds and throws away five nodes and five <img>
+   decodes per row, forever; a parked tile costs one property write to refill
+   and keeps a thumbnail the user is quite likely to scroll back to. */
+function park(index, node) {
+  state.nodes.delete(index);
+  node.remove();
+  if (state.pool.length < POOL_MAX) state.pool.push(node);
+}
+
+/* An empty tile: every element a tile can ever need, built once. The clock is
+   built with the rest and hidden rather than added and removed, because a tile
+   parked from a video and refilled with a photograph must not carry a stale
+   one, and "hidden" is a cheaper way to say that than a subtree edit. */
+function blankTile() {
   const node = document.createElement('button');
   node.className = 'tile';
-  node.dataset.id = tile.id;
-  node.dataset.index = index;
-  node.dataset.saved = tile.saved;
-  node.dataset.quarantined = tile.quarantined;
-  node.dataset.video = tile.duration > 0;
   node.setAttribute('role', 'gridcell');
-  node.setAttribute('aria-selected', state.selection.has(tile.id));
-  node.setAttribute('aria-label', describe(tile));
   node.tabIndex = -1;
 
   const img = document.createElement('img');
   img.loading = 'lazy';
   img.decoding = 'async';
   img.alt = '';
-  img.src = `/thumb/${tile.id}`;
-  img.addEventListener('load', () => img.classList.add('ready'), { once: true });
+  /* Not {once: true}: this node outlives the image in it. */
+  img.addEventListener('load', () => img.classList.add('ready'));
 
   const vignette = document.createElement('div');
   vignette.className = 'vignette';
 
   const mark = document.createElement('span');
   mark.className = 'mark';
-  mark.dataset.group = tile.group;
 
   const strip = document.createElement('span');
   strip.className = 'strip';
-  strip.textContent = stripText(tile);
 
-  node.append(img, vignette, mark, strip);
-  if (tile.duration > 0) {
-    /* A still frame of a video looks exactly like a photograph, so the length
-       is the label: it says both "this moves" and how long it runs. */
-    const clock = document.createElement('span');
-    clock.className = 'clock';
-    clock.textContent = clockText(tile.duration);
-    node.appendChild(clock);
+  /* A still frame of a video looks exactly like a photograph, so the length is
+     the label: it says both "this moves" and how long it runs. */
+  const clock = document.createElement('span');
+  clock.className = 'clock';
+
+  node.append(img, vignette, mark, strip, clock);
+  node.parts = { img, mark, strip, clock };
+  return node;
+}
+
+/* Point a tile at a result. Category is carried by the dot for scanning and by
+   the label in words for everyone the dot does not work for (DESIGN.md §9). */
+function fillTile(node, tile, index) {
+  const { img, mark, strip, clock } = node.parts;
+  node.dataset.id = tile.id;
+  node.dataset.index = index;
+  node.dataset.saved = tile.saved;
+  node.dataset.quarantined = tile.quarantined;
+  node.dataset.video = tile.duration > 0;
+  delete node.dataset.leaving;
+  node.setAttribute('aria-selected', state.selection.has(tile.id));
+  node.setAttribute('aria-label', describe(tile));
+  node.geometry = -1;   /* a refilled tile has not been placed at its index */
+
+  const src = `/thumb/${tile.id}`;
+  if (!img.src.endsWith(src)) {
+    img.classList.remove('ready');
+    img.src = src;
+    /* Already in the browser's cache: no load event is coming, and without
+       this the tile fades in from a permanent opacity 0. */
+    if (img.complete && img.naturalWidth) img.classList.add('ready');
   }
+  mark.dataset.group = tile.group;
+  strip.textContent = stripText(tile);
+  clock.hidden = !(tile.duration > 0);
+  clock.textContent = tile.duration > 0 ? clockText(tile.duration) : '';
   return node;
 }
 
@@ -347,11 +397,11 @@ function animateOut(ids) {
   }
 }
 
-/* Rebuild the window against the current tiles array. Nodes are dropped rather
-   than reused because their ids have shifted. */
+/* Rebuild the window against the current tiles array. Every node is refilled
+   rather than moved, because a removal shifts the index of everything after
+   it and a node's index is the only thing tying it to a result. */
 function reflow() {
-  for (const node of state.nodes.values()) node.remove();
-  state.nodes.clear();
+  for (const [index, node] of state.nodes) park(index, node);
   layout();
   renderCounts();
 }
