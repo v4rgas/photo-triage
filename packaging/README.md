@@ -16,16 +16,15 @@ The AUR is a separate git repository holding only `PKGBUILD` and `.SRCINFO`.
 It needs an AUR account with your SSH public key added under
 [Account settings](https://aur.archlinux.org/account/).
 
-First time:
+Then:
 
 ```bash
-git clone ssh://aur@aur.archlinux.org/photo-triage.git aur-photo-triage
-cp packaging/PKGBUILD packaging/.SRCINFO aur-photo-triage/
-cd aur-photo-triage
-git add PKGBUILD .SRCINFO
-git commit -m "Initial import: photo-triage 0.1.0"
-git push
+./packaging/publish-aur.sh
 ```
+
+That regenerates `.SRCINFO`, refuses to publish a PKGBUILD whose source hash is
+still `SKIP`, clones the AUR repo, copies both files in and pushes. The first
+push creates the package; later ones update it.
 
 For each new release, tag and publish upstream first, since `sha256sums` is
 pinned to the tarball GitHub generates from the tag:
