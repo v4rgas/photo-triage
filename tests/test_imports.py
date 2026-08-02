@@ -48,3 +48,19 @@ def test_a_missing_folder_is_reported_rather_than_traced(tmp_path, capsys):
 
     assert main([str(tmp_path / "nope")]) == 2
     assert "not a folder" in capsys.readouterr().err
+
+
+def test_a_started_build_reports_itself_as_running_immediately(tmp_path):
+    """Otherwise a caller that waits for it sees "not running" and carries on.
+
+    Setting the flag inside the thread leaves a window between start()
+    returning and the thread being scheduled, and the CLI served an unbuilt
+    folder whenever it lost that race.
+    """
+    from photo_triage.pipeline import Build
+
+    build = Build(tmp_path, stages=())
+    build.start()
+    assert build.progress.running is True
+    build.wait()
+    assert build.progress.running is False

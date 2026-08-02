@@ -90,9 +90,21 @@ class Build:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        """Run the build on a daemon thread. Returns at once."""
+        """Run the build on a daemon thread. Returns at once.
+
+        `running` is set here, on the calling thread, rather than at the top of
+        `run`. Setting it there leaves a window between this returning and the
+        thread being scheduled in which the build looks finished, and a caller
+        that waits for it sees "not running" and carries straight on.
+        """
+        self.progress.running = True
         self._thread = threading.Thread(target=self.run, name="build", daemon=True)
         self._thread.start()
+
+    def wait(self) -> None:
+        """Block until the build has finished. Safe if it never started."""
+        if self._thread is not None:
+            self._thread.join()
 
     def run(self) -> None:
         """Run every requested stage in order, in place.

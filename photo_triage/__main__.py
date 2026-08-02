@@ -203,6 +203,7 @@ def _run_with_progress(build: Build) -> None:
                     last = (stage, step)
         time.sleep(0.1 if live else 0.4)
 
+    build.wait()
     if live:
         print(f"\r{' ' * 78}\r", end="", file=sys.stderr)
     if build.progress.error:
