@@ -204,6 +204,36 @@ class Frame:
     of: int = 1
 
 
+def pending(
+    cache: Cache,
+    records: list[MediaRecord],
+    embeds: np.ndarray | None = None,
+) -> list[tuple[int, Frame]]:
+    """Every picture still waiting for a vector, as (segment offset, frame).
+
+    Cheap, and needs no model. That is the point: the caller can find out
+    whether there is any work before paying to load CLIP, which on a first run
+    means a 600 MB download. A folder with nothing to embed should not download
+    a model to discover that.
+    """
+    if embeds is None:
+        embeds = cache.load_embeddings(segment_count(records))
+    spans = segment_spans(records)
+    where = Quarantine(cache, records)
+
+    todo: list[tuple[int, Frame]] = []
+    for row, record in enumerate(records):
+        if not record.readable:
+            continue
+        start, stop = spans[row]
+        path = where.location(row)
+        for offset in range(start, stop):
+            if not embeds[offset].any():
+                moment = offset - start if record.is_video else None
+                todo.append((offset, Frame(path, moment, stop - start)))
+    return todo
+
+
 def embed(
     cache: Cache,
     records: list[MediaRecord],
@@ -217,20 +247,8 @@ def embed(
     is flushed periodically during the pass, bounding what a kill can cost to
     the last few thousand pictures rather than the whole run.
     """
-    spans = segment_spans(records)
     embeds = cache.load_embeddings(segment_count(records))
-    where = Quarantine(cache, records)
-
-    todo: list[tuple[int, Frame]] = []
-    for row, record in enumerate(records):
-        if not record.readable:
-            continue
-        start, stop = spans[row]
-        path = where.location(row)
-        for offset in range(start, stop):
-            if not embeds[offset].any():
-                moment = offset - start if record.is_video else None
-                todo.append((offset, Frame(path, moment, stop - start)))
+    todo = pending(cache, records, embeds)
     if not todo:
         if progress:
             progress(0, 0)

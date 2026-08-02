@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from photo_triage.cache import CACHE_DIRNAME, Cache
 from photo_triage.embed import embed
 from photo_triage.scan import scan
 
-from .conftest import write_image
+from .conftest import fake_embeddings, write_image
 
 
 def rels(cache: Cache) -> list[str]:
@@ -102,3 +103,27 @@ def test_embedding_resumes_instead_of_restarting(scanned: Cache):
 def scan_and_read(cache: Cache) -> Cache:
     scan(cache)
     return cache
+
+
+def test_a_folder_with_no_images_never_reaches_for_the_model(tmp_path):
+    """Loading CLIP downloads about 600 MB on a first run, and a folder with
+    nothing to embed should not pay that to discover it has nothing to do."""
+    from photo_triage.pipeline import Build
+
+    (tmp_path / "readme.txt").write_text("not a picture")
+
+    build = Build(tmp_path)
+    build._model = lambda: pytest.fail("the model was loaded with nothing to embed")
+    build.run()
+
+    assert build.progress.error is None
+
+
+def test_nothing_pending_once_everything_is_embedded(scanned: Cache):
+    from photo_triage.embed import pending
+
+    records = scanned.load_index()
+    assert len(pending(scanned, records)) == len(records)
+
+    fake_embeddings(scanned, len(records))
+    assert pending(scanned, records) == []

@@ -23,7 +23,7 @@ from . import classify as classify_stage
 from . import scan as scan_stage
 from . import thumbs as thumbs_stage
 from .cache import Cache, segment_count
-from .embed import Device, Embedder, embed, pick_device, row_vectors
+from .embed import Device, Embedder, embed, pending, pick_device, row_vectors
 
 log = logging.getLogger(__name__)
 
@@ -119,18 +119,23 @@ class Build:
             records = self.cache.load_index()
             if "scan" in self.stages:
                 records = scan_stage.scan(self.cache, self._reporter("scan"))
-            if "embed" in self.stages:
-                embeds = embed(
-                    self.cache, records, self._model(), self._reporter("embed")
-                )
-            else:
-                embeds = self.cache.load_embeddings(segment_count(records))
-            if "classify" in self.stages:
+            embeds = self.cache.load_embeddings(segment_count(records))
+
+            # The reporter is called before the model, not as a later argument
+            # to the same call. Python evaluates arguments left to right, so
+            # loading CLIP first left the progress display still showing the
+            # previous stage for the whole download.
+            if "embed" in self.stages and pending(self.cache, records, embeds):
+                report = self._reporter("embed")
+                embeds = embed(self.cache, records, self._model(), report)
+
+            # Both of these need the model, and asking for it downloads 600 MB
+            # on a first run. A folder with nothing embedded in it has nothing
+            # to classify either, so it should cost nothing.
+            if "classify" in self.stages and embeds.any():
+                report = self._reporter("classify")
                 classify_stage.classify(
-                    self.cache,
-                    row_vectors(embeds, records),
-                    self._model(),
-                    self._reporter("classify"),
+                    self.cache, row_vectors(embeds, records), self._model(), report
                 )
             if "thumbs" in self.stages:
                 thumbs_stage.build_thumbnails(
