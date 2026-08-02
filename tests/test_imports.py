@@ -50,17 +50,43 @@ def test_a_missing_folder_is_reported_rather_than_traced(tmp_path, capsys):
     assert "not a folder" in capsys.readouterr().err
 
 
-def test_a_started_build_reports_itself_as_running_immediately(tmp_path):
+def test_start_marks_the_build_running_before_it_returns(tmp_path, monkeypatch):
     """Otherwise a caller that waits for it sees "not running" and carries on.
 
     Setting the flag inside the thread leaves a window between start()
     returning and the thread being scheduled, and the CLI served an unbuilt
     folder whenever it lost that race.
+
+    The thread is stubbed out rather than raced against: the property under
+    test is that the flag is set on the calling thread, and a real thread that
+    finishes quickly would clear it again before any assertion could run.
     """
+    import threading
+
+    from photo_triage.pipeline import Build
+
+    started = []
+    monkeypatch.setattr(
+        threading, "Thread",
+        lambda *a, **k: type("Stub", (), {"start": lambda self: started.append(1),
+                                          "join": lambda self: None})(),
+    )
+    build = Build(tmp_path, stages=())
+    build.start()
+    assert build.progress.running is True
+    assert started == [1]
+
+
+def test_wait_is_safe_on_a_build_that_never_started(tmp_path):
+    from photo_triage.pipeline import Build
+
+    Build(tmp_path, stages=()).wait()
+
+
+def test_a_build_that_ran_is_finished_after_wait(tmp_path):
     from photo_triage.pipeline import Build
 
     build = Build(tmp_path, stages=())
     build.start()
-    assert build.progress.running is True
     build.wait()
     assert build.progress.running is False
