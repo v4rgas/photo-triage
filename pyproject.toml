@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 
-# torch/open_clip are deliberately NOT listed here. PyTorch ships a different
-# wheel per backend (PROJECT.md 4a) and the user must pick one; declaring it as
-# a dependency would silently install the CPU build over someone's ROCm build.
-# Everything except the embed and text-encode paths runs without it.
+# torch is declared only in the `model` extra, never in the base install.
+# PyTorch ships a different wheel per accelerator (PROJECT.md 4a) and a plain
+# resolver picks the CUDA one for everybody. `uv tool install` with
+# --torch-backend rewrites the index for exactly these packages, which is the
+# supported way to get the right build, so the extra is safe to declare and
+# safe to leave out. Everything except embedding and text search runs without.
 dependencies = [
     "flask>=3.0",
     "pillow>=10.0",
@@ -19,8 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Convenience only, and only correct on NVIDIA/CPU. See README for AMD/Apple.
-model = ["open_clip_torch>=2.24"]
+# Install with `uv tool install "photo-triage[model]" --torch-backend=auto`,
+# or --torch-backend=rocm6.3 on AMD, which uv's auto does not detect.
+model = ["torch>=2.4", "torchvision>=0.19", "open_clip_torch>=2.24"]
 
 [project.scripts]
 photo-triage = "photo_triage.__main__:main"

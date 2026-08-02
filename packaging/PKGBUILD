@@ -8,10 +8,13 @@ arch=('any')
 url="https://github.com/v4rgas/photo-triage"
 license=('MIT')
 
-# PyTorch and open_clip are optional on purpose. Everything except embedding
-# and text search works without them, so browsing, filtering, quarantining and
-# restoring an already-triaged folder need none of the heavy stack. Which
-# PyTorch you want also depends on your hardware, and only you know that.
+# Everything is a real dependency so that pacman owns every file and nothing
+# is fetched at runtime. `python-pytorch` is named rather than one of its
+# variants because `python-pytorch-rocm` and `python-pytorch-cuda` both provide
+# it and conflict with each other, which is how Arch expresses "pick the build
+# that matches your hardware": pacman prompts, and whichever you choose
+# satisfies this. python-torchvision in the official repositories depends on it
+# exactly this way.
 depends=(
   'python'
   'python-flask'
@@ -19,12 +22,12 @@ depends=(
   'python-numpy'
   'python-imagehash'
   'python-av'
+  'python-pytorch'
+  'python-open-clip-torch'
 )
 optdepends=(
-  'python-pytorch: embedding and text search on the CPU'
-  'python-pytorch-rocm: embedding on an AMD GPU, roughly 20x faster'
-  'python-pytorch-cuda: embedding on an NVIDIA GPU, roughly 20x faster'
-  'python-open-clip-torch: the CLIP model, needed alongside any python-pytorch'
+  'python-pytorch-rocm: embedding on an AMD GPU rather than the CPU, ~20x faster'
+  'python-pytorch-cuda: embedding on an NVIDIA GPU rather than the CPU, ~20x faster'
 )
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-hatchling')
 checkdepends=('python-pytest')

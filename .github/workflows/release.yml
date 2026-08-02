@@ -9,100 +9,48 @@ on:
         description: 'Existing tag to attach artifacts to'
         required: true
 
-permissions:
-  contents: write
-
 jobs:
-  # The standard Python artifacts. Cheap, always correct, and what anyone who
-  # already has Python should be using.
-  wheel:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv build
+      - run: uv tool run twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel
-          path: dist/*
-
-  # A single file someone can download and run without having Python at all.
-  #
-  # It deliberately does not contain PyTorch. Baking one in would pick an
-  # accelerator on the user's behalf, and the wrong pick is either 2.5 GB of
-  # CUDA that a Radeon cannot use or a CPU build running twenty times slower
-  # than the machine can. Instead the binary detects the GPU on first run and
-  # installs the matching wheel next to itself.
-  standalone:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04     # oldest glibc we support, so it runs elsewhere
-            asset: photo-triage-linux-x86_64
-          - os: macos-14         # arm64
-            asset: photo-triage-macos-arm64
-          - os: macos-13         # x86_64
-            asset: photo-triage-macos-x86_64
-          - os: windows-latest
-            asset: photo-triage-windows-x86_64.exe
-
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install
-        # pyinstaller needs the real dependencies present to bundle them, and
-        # pip is bundled deliberately: the first-run install runs it in-process
-        # because a frozen build has no interpreter on PATH to shell out to.
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e . pyinstaller
-
-      - name: Build
-        working-directory: packaging
-        run: pyinstaller --clean --noconfirm --distpath dist --workpath build photo-triage.spec
-
-      - name: Name the artifact
-        shell: bash
-        working-directory: packaging/dist
-        run: |
-          if [ -f photo-triage.exe ]; then mv photo-triage.exe "${{ matrix.asset }}"
-          else mv photo-triage "${{ matrix.asset }}"; fi
-          ls -lh
-
-      - name: Smoke test
-        shell: bash
-        working-directory: packaging/dist
-        # Proves the bundle starts, finds its own UI assets and runs the parts
-        # that need no model. Embedding is not tested here: it would download
-        # PyTorch on a runner, which is the whole thing we are avoiding.
-        run: |
-          chmod +x "${{ matrix.asset }}" || true
-          ./"${{ matrix.asset }}" --help > /dev/null
-          mkdir -p empty && ./"${{ matrix.asset }}" empty --status
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset }}
-          path: packaging/dist/${{ matrix.asset }}
+          name: dist
+          path: dist/
 
   publish:
-    needs: [wheel, standalone]
+    needs: build
     runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted publishing: PyPI verifies this workflow's OIDC identity, so
+      # there is no API token to store, leak or rotate.
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-      - name: Attach to the release
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  attach:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Attach the wheel and sdist to the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          find artifacts -type f -printf '%s\t%p\n' | sort -rn
-          gh release upload "$TAG" $(find artifacts -type f) \
+          gh release upload "$TAG" dist/* \
             --repo "${{ github.repository }}" --clobber

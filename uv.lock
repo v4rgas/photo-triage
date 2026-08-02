@@ -769,6 +769,8 @@ dependencies = [
 [package.optional-dependencies]
 model = [
     { name = "open-clip-torch" },
+    { name = "torch" },
+    { name = "torchvision" },
 ]
 
 [package.dev-dependencies]
@@ -784,6 +786,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "open-clip-torch", marker = "extra == 'model'", specifier = ">=2.24" },
     { name = "pillow", specifier = ">=10.0" },
+    { name = "torch", marker = "extra == 'model'", specifier = ">=2.4" },
+    { name = "torchvision", marker = "extra == 'model'", specifier = ">=0.19" },
 ]
 provides-extras = ["model"]
 

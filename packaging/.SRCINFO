@@ -16,10 +16,10 @@ pkgbase = photo-triage
 	depends = python-numpy
 	depends = python-imagehash
 	depends = python-av
-	optdepends = python-pytorch: embedding and text search on the CPU
-	optdepends = python-pytorch-rocm: embedding on an AMD GPU, roughly 20x faster
-	optdepends = python-pytorch-cuda: embedding on an NVIDIA GPU, roughly 20x faster
-	optdepends = python-open-clip-torch: the CLIP model, needed alongside any python-pytorch
+	depends = python-pytorch
+	depends = python-open-clip-torch
+	optdepends = python-pytorch-rocm: embedding on an AMD GPU rather than the CPU, ~20x faster
+	optdepends = python-pytorch-cuda: embedding on an NVIDIA GPU rather than the CPU, ~20x faster
 	source = photo-triage-0.1.0.tar.gz::https://github.com/v4rgas/photo-triage/archive/refs/tags/v0.1.0.tar.gz
 	sha256sums = 73a6d7a842e0dd88de1b5552aa1d651d13cc4470fef8b407110ffcb41cdc4e5d
 

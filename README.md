@@ -15,7 +15,7 @@ step, and the UI works with the wifi off, because these are my photographs and
 they stay on my machine.
 
 ```bash
-uv pip install -e .
+uv tool install "photo-triage[model]" --torch-backend=auto
 photo-triage ~/whatsapp-export
 #   http://127.0.0.1:63029
 ```
@@ -87,55 +87,45 @@ batch can be restored, not only the most recent.
 ### Arch Linux
 
 ```bash
-paru -S photo-triage          # or yay, or makepkg from packaging/PKGBUILD
+paru -S photo-triage
 ```
 
-The package pulls in everything except PyTorch and CLIP, which are optional
-depends because the choice is yours: `python-pytorch-rocm` for AMD,
-`python-pytorch-cuda` for NVIDIA, plain `python-pytorch` for neither, plus
-`python-open-clip-torch` alongside whichever you pick. photo-triage will not
-install into a distribution-managed Python behind your back; it tells you what
-is missing and stops.
+pacman owns every file and resolves PyTorch itself. `python-pytorch-rocm` and
+`python-pytorch-cuda` both provide `python-pytorch` and conflict with each
+other, which is how Arch says "pick the build that matches your hardware", so
+pacman asks you once and tracks whatever you choose. Nothing is downloaded at
+runtime.
 
-### A single downloadable binary
+### Everywhere else
 
-Grab `photo-triage-linux-x86_64`, `-macos-arm64`, `-macos-x86_64` or
-`-windows-x86_64.exe` from the
-[latest release](https://github.com/v4rgas/photo-triage/releases/latest), make
-it executable, and run it. It needs no Python.
-
-About 100 MB, because it carries its own interpreter, ffmpeg and the UI. It
-does not carry PyTorch: that would mean choosing your accelerator for you, and
-the wrong choice is either 2.5 GB of CUDA a Radeon cannot use or a CPU build
-running twenty times slower than your machine can. So on the first run that
-actually needs to read images it looks at your hardware, prefers your GPU, and
-downloads the matching build into `~/.cache/photo-triage/`. Delete that folder
-to undo it.
-
-### Anywhere else
-
-The command at the top is the whole install. On first run, and only when it actually
-needs to read images, photo-triage works out what accelerator you have, tells
-you the exact command it is about to run, and installs the matching PyTorch
-wheel:
-
-```
-PyTorch and open_clip are not installed yet. They are what reads the images.
-Detected: rocm (the amdgpu kernel driver is loaded)
-Will run: uv pip install --index-url https://download.pytorch.org/whl/rocm6.3 torch torchvision open_clip_torch
-
-Install now? [Y/n]
+```bash
+uv tool install "photo-triage[model]" --torch-backend=auto
 ```
 
-PyTorch ships a different wheel per accelerator and they are not
-interchangeable. The default wheel on PyPI is a CUDA build, and on a Radeon it
-gives you an install that works and runs twenty times slower than your hardware
-can. That is why `torch` is not a declared dependency here: a resolver would
-pick the wrong one before any of this code could run, and would overwrite a
-correct GPU build you had installed by hand. Pass `--yes` to skip the prompt,
-or install it yourself and photo-triage will leave it alone. In a
-distribution-managed Python, such as a system install on Arch or Debian, it
-never installs anything and prints your package manager's command instead.
+On an AMD GPU, name the backend, because uv's `auto` reads NVIDIA drivers and
+quietly settles on the CPU build for a Radeon:
+
+```bash
+uv tool install "photo-triage[model]" --torch-backend=rocm6.3
+```
+
+`uvx "photo-triage[model]"` runs it once without installing. If you do not have
+[uv](https://docs.astral.sh/uv/), `pipx install photo-triage` works too, but
+you then pick the PyTorch wheel yourself.
+
+`--torch-backend` exists because PyTorch ships a different wheel per
+accelerator and they are not interchangeable. The wheel on PyPI is a CUDA
+build, and on a Radeon it gives you an install that works and runs about twenty
+times slower than your hardware can. uv rewrites the index for exactly those
+packages, which is why `photo-triage[model]` can declare `torch` like any
+normal dependency and still resolve to the right build.
+
+Drop the `[model]` extra if you only want to browse, filter, quarantine and
+restore a folder somebody else embedded. Everything except embedding and text
+search works without PyTorch, and photo-triage tells you the command above if
+you ask for something that needs it.
+
+### On a GPU
 
 The CUDA and ROCm wheels bundle their own runtime, so there is no system
 toolkit and no sudo involved. On AMD you need the `amdgpu` kernel driver and
@@ -148,9 +138,6 @@ the architecture, sets `HSA_OVERRIDE_GFX_VERSION` itself, and logs the value so
 you can reproduce it by hand. If a device enumerates and then fails a test
 matmul, it drops to the CPU with a warning rather than dying forty minutes into
 a run.
-
-Browsing, filtering, quarantining and restoring an already-triaged folder all
-work without the model, so they never wait on a download.
 
 ## Speed
 
