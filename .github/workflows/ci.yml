@@ -21,12 +21,43 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: ${{ matrix.python }}
 
+      # A project virtualenv rather than --system: the runners' interpreters
+      # are externally managed, which is the same PEP 668 rule that stops
+      # photo-triage installing into a distribution Python.
       - name: Install
-        # No PyTorch anywhere in CI. The suite deliberately does not need it,
-        # which is worth keeping true: if a test ever starts requiring the
-        # model, this job is where it gets caught rather than in a release.
-        run: uv pip install --system -e . pytest
+        run: uv sync --no-install-project --group dev && uv pip install -e .
 
+      # No PyTorch anywhere in CI. The suite deliberately does not need it,
+      # which is worth keeping true: if a test ever starts requiring the model,
+      # this job is where it gets caught rather than in a release.
       - name: Test
-        run: python -m pytest -q
+        run: uv run --no-sync pytest -q
+
+  arch-package:
+    # A PKGBUILD that no longer builds is worse than no PKGBUILD, because it
+    # fails quietly: nobody runs makepkg until they want to publish.
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git python-build python-installer \
+            python-wheel python-hatchling python-pytest python-flask \
+            python-pillow python-numpy python-av
+          useradd -m builder
+          chown -R builder .
+
+      - name: makepkg
+        # --nodeps because python-imagehash and python-open-clip-torch live in
+        # the AUR, which makepkg cannot reach. --skipchecksums because a
+        # PKGBUILD on a branch points at a release tarball that may not exist
+        # yet. This proves the recipe still builds and installs, not that the
+        # dependency graph resolves.
+        run: |
+          su builder -c 'cd packaging && makepkg --nodeps --skipchecksums \
+            --nocheck --noconfirm -f'
+          ls -lh packaging/*.pkg.tar.zst
