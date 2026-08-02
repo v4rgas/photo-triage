@@ -15,10 +15,11 @@ step, and the UI works with the wifi off, because these are my photographs and
 they stay on my machine.
 
 ```bash
-uv tool install "photo-triage[model]" --torch-backend=auto
-photo-triage ~/whatsapp-export
+uvx --torch-backend=auto --from "photo-triage[model]" photo-triage ~/whatsapp-export
 #   http://127.0.0.1:63029
 ```
+
+On an AMD GPU use `--torch-backend=rocm6.3`. See [Run it](#run-it).
 
 The port is derived from the folder's path, so it is the same every time you
 open that folder and a bookmark keeps working, two folders can be triaged side
@@ -82,38 +83,58 @@ Nothing gets deleted. Images move into a quarantine tree that mirrors your
 folder structure, which you can browse and search with the same tools, and any
 batch can be restored, not only the most recent.
 
-## Install
+## Run it
+
+Nothing to install. Point it at a folder and it does the rest:
 
 ```bash
-uv tool install "photo-triage[model]" --torch-backend=auto
-```
-
-On an AMD GPU, name the backend, because uv's `auto` reads NVIDIA drivers and
-quietly settles on the CPU build for a Radeon:
-
-```bash
-uv tool install "photo-triage[model]" --torch-backend=rocm6.3
-```
-
-To run it once without installing anything:
-
-```bash
+# NVIDIA, Apple Silicon, or no GPU at all
 uvx --torch-backend=auto --from "photo-triage[model]" photo-triage ~/whatsapp-export
-``` If you do not have
-[uv](https://docs.astral.sh/uv/), `pipx install photo-triage` works too, but
-you then pick the PyTorch wheel yourself.
 
-`--torch-backend` exists because PyTorch ships a different wheel per
-accelerator and they are not interchangeable. The wheel on PyPI is a CUDA
-build, and on a Radeon it gives you an install that works and runs about twenty
-times slower than your hardware can. uv rewrites the index for exactly those
-packages, which is why `photo-triage[model]` can declare `torch` like any
-normal dependency and still resolve to the right build.
+# AMD
+uvx --torch-backend=rocm6.3 --from "photo-triage[model]" photo-triage ~/whatsapp-export
+```
+
+It scans, embeds, classifies and thumbnails the whole folder, showing progress
+in the terminal, and only then prints the address to open. The first run pulls
+about 600 MB of model weights; every run after that starts from the cache and
+embeds only what is new.
+
+## Install it
+
+If you would rather have it on your PATH than type `uvx` each time:
+
+```bash
+uv tool install "photo-triage[model]" --torch-backend=auto      # NVIDIA, Apple, CPU
+uv tool install "photo-triage[model]" --torch-backend=rocm6.3   # AMD
+
+photo-triage ~/whatsapp-export
+```
+
+Without [uv](https://docs.astral.sh/uv/), `pipx install photo-triage` works,
+but you then pick and install the PyTorch wheel yourself.
+
+### Why the backend has to be named on AMD
+
+PyTorch ships a different wheel per accelerator and they are not
+interchangeable. The wheel on PyPI is a CUDA build, and on a Radeon it gives
+you an install that runs about twenty times slower than your hardware can.
+`--torch-backend` makes uv rewrite the index for exactly those packages, which
+is why `photo-triage[model]` can declare `torch` like a normal dependency and
+still resolve to the right build.
+
+`auto` is right on NVIDIA, on Apple Silicon and on a machine with no GPU. It is
+wrong on AMD: it reads NVIDIA drivers, finds none, and settles on the CPU
+build, so a Radeon needs `rocm6.3` spelled out. photo-triage notices when the
+build does not match the hardware and tells you, rather than quietly running
+twenty times slower.
+
+### Browsing without the model
 
 Drop the `[model]` extra if you only want to browse, filter, quarantine and
 restore a folder somebody else embedded. Everything except embedding and text
-search works without PyTorch, and photo-triage tells you the command above if
-you ask for something that needs it.
+search works without PyTorch, and photo-triage prints the command above if you
+ask for something that needs it.
 
 ### On a GPU
 
