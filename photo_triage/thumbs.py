@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .cache import Cache, MediaRecord, segment_spans
 from .quarantine import Quarantine
@@ -100,7 +100,13 @@ def _pick_frame(source: Path, key: np.ndarray | None) -> Image.Image | None:
         with Image.open(source) as im:
             if getattr(im, "n_frames", 1) > 1:
                 im.seek(0)
-            return im.convert("RGB")
+            # A phone stores a portrait shot as landscape pixels plus an EXIF
+            # rotation tag. The browser applies that tag to the original served
+            # by /full, so a thumbnail that does not apply it is the one frame
+            # in the UI that comes out sideways. Baking it in here rather than
+            # rotating in CSS keeps the JPEG true on disk, where the grid's
+            # square-crop layout reads its aspect ratio from the pixels.
+            return ImageOps.exif_transpose(im).convert("RGB")
 
     frames = sample(source, len(key))
     if not frames:
