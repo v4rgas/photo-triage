@@ -84,6 +84,9 @@ batch can be restored, not only the most recent.
 
 ## Install
 
+> Not on PyPI or the AUR yet. Until then:
+> `git clone https://github.com/v4rgas/photo-triage && cd photo-triage && uv tool install ".[model]" --torch-backend=auto`
+
 ### Arch Linux
 
 ```bash
