@@ -56,6 +56,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        # A tag push does not create a release, so the first run for a tag has
+        # nothing to upload to. Create it then, upload to it afterwards.
         run: |
-          gh release upload "$TAG" dist/* \
-            --repo "${{ github.repository }}" --clobber
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1
+          then
+            gh release upload "$TAG" dist/* \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "${{ github.repository }}" --generate-notes --verify-tag
+          fi

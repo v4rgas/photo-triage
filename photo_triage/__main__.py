@@ -28,6 +28,7 @@ from .runtime import ensure_model_runtime
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"  # never configurable; see server.py.
+_SPINNER = ("|", "/", "-", "\\")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,8 +80,18 @@ def _build_and_serve(root: Path, args) -> int:
     # photographs. Our own line above it says where to go.
     flask.cli.show_server_banner = lambda *args, **kwargs: None
 
+    # Build everything before serving anything. A grid of images that have not
+    # been embedded yet cannot be searched, sorted or filtered, so opening the
+    # browser onto one is offering a tool that does not work yet. The wait is
+    # visible in the terminal instead, where a progress bar belongs.
+    _run_with_progress(build)
+    if build.progress.error:
+        # Serve anyway. A folder that half embedded is still worth browsing,
+        # and refusing to start leaves the user with an error and no way to
+        # look at what did work.
+        log.warning("continuing with what was built")
+
     port = args.port or pick_port(root)
-    build.start()
     app = create_app(root, build)
     url = f"http://{HOST}:{port}"
     print(f"photo-triage serving {root}\n  {url}", file=sys.stderr)
@@ -163,33 +174,103 @@ def _restore_all(root: Path) -> int:
 
 
 def _run_with_progress(build: Build) -> None:
-    """Run a build in the foreground, printing a line per stage transition.
+    """Run a build to completion in the foreground, showing where it has got to.
 
-    Progress goes to stderr as whole lines rather than as a redrawn bar,
-    because a bar piped through `tail` or a log file disappears entirely
-    (PROJECT.md 9.8).
+    On a terminal this redraws a single line, which is what someone watching a
+    twenty-minute embed pass wants. Redirected to a file or piped through
+    `tail`, a redrawn line is invisible, so it falls back to printing a line
+    per chunk of progress instead (PROJECT.md 9.8).
     """
+    live = sys.stderr.isatty()
     build.start()
     last = ("", -1)
+
     while build.progress.running or build.progress.stage:
-        stage, done, total = (
-            build.progress.stage,
-            build.progress.done,
-            build.progress.total,
-        )
-        step = done // 500 if total > 2000 else done
+        stage = build.progress.stage
+        done, total = build.progress.done, build.progress.total
         # A stage with nothing to do says nothing: "embed: 0/0" reads as a
         # failure when it means the cache was already complete.
-        if stage and total and (stage, step) != last:
-            eta = build.progress.eta_seconds
-            suffix = f", {eta / 60:.0f} min left" if eta and eta > 90 else ""
-            print(f"{stage}: {done:,}/{total:,}{suffix}", file=sys.stderr)
-            last = (stage, step)
-        time.sleep(0.2)
+        if stage and not total and live:
+            _spin(stage, time.time() - build.progress.started)
+        elif stage and total:
+            if live:
+                _draw(stage, done, total, build.progress.eta_seconds)
+            else:
+                step = done // 500 if total > 2000 else done
+                if (stage, step) != last:
+                    print(_plain(stage, done, total, build.progress.eta_seconds),
+                          file=sys.stderr)
+                    last = (stage, step)
+        time.sleep(0.1 if live else 0.4)
+
+    if live:
+        print(f"\r{' ' * 78}\r", end="", file=sys.stderr)
     if build.progress.error:
         print(f"failed: {build.progress.error}", file=sys.stderr)
-    else:
-        print("done", file=sys.stderr)
+
+
+def _spin(stage: str, elapsed: float) -> None:
+    """Show that a stage with nothing to count is still going.
+
+    The embed stage loads CLIP before it can report a total, and on a first run
+    that means downloading about 600 MB. Printing nothing for several minutes
+    is indistinguishable from a hang.
+    """
+    tick = _SPINNER[int(elapsed * 4) % len(_SPINNER)]
+    note = "loading the model" if stage == "embed" else "working"
+    print(f"\r{stage:<9}{tick} {note}, {elapsed:.0f}s{' ' * 30}",
+          end="", flush=True, file=sys.stderr)
+
+
+def _draw(stage: str, done: int, total: int, eta: float | None) -> None:
+    """Redraw the one progress line. Terminal only."""
+    width = 24
+    filled = int(width * done / total) if total else 0
+    full, empty = _bar_glyphs()
+    line = (
+        f"{stage:<9}{full * filled}{empty * (width - filled)}  "
+        f"{done:>7,}/{total:<7,} {done * 100 // max(total, 1):>3}%{_eta(eta)}"
+    )
+    print(f"\r{line:<78}", end="", flush=True, file=sys.stderr)
+
+
+def _plain(stage: str, done: int, total: int, eta: float | None) -> str:
+    return f"{stage}: {done:,}/{total:,}{_eta(eta)}"
+
+
+def _eta(seconds: float | None) -> str:
+    if not seconds or seconds < 5:
+        return ""
+    if seconds < 90:
+        return f"  {seconds:.0f}s left"
+    return f"  {seconds / 60:.0f}m left"
+
+
+def _bar_glyphs() -> tuple[str, str]:
+    """Block characters where the terminal can render them, ASCII where not."""
+    encoding = getattr(sys.stderr, "encoding", "") or ""
+    try:
+        "█·".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return "#", "-"
+    return "█", "·"
+
+
+class _ProgressAwareHandler(logging.StreamHandler):
+    """Writes log lines to stderr without landing on top of the progress bar.
+
+    The bar owns one line and redraws it with a carriage return, so anything
+    else writing to the same stream appends to it and both become unreadable.
+    This wipes the line first, and the next redraw puts the bar back.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(sys.stderr)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self.stream.isatty():
+            self.stream.write("\r" + " " * 78 + "\r")
+        super().emit(record)
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -201,7 +282,7 @@ def _configure_logging(verbose: bool) -> None:
     line saying where the server is. The fix is the other way round: leave the
     root at WARNING and turn our own package up.
     """
-    logging.basicConfig(format="%(message)s", stream=sys.stderr)
+    logging.basicConfig(handlers=[_ProgressAwareHandler()], format="%(message)s")
     logging.getLogger().setLevel(logging.DEBUG if verbose else logging.WARNING)
     logging.getLogger("photo_triage").setLevel(
         logging.DEBUG if verbose else logging.INFO

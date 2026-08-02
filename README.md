@@ -84,9 +84,6 @@ batch can be restored, not only the most recent.
 
 ## Install
 
-> Not on PyPI yet. Until then:
-> `git clone https://github.com/v4rgas/photo-triage && cd photo-triage && uv tool install ".[model]" --torch-backend=auto`
-
 ```bash
 uv tool install "photo-triage[model]" --torch-backend=auto
 ```
@@ -98,7 +95,11 @@ quietly settles on the CPU build for a Radeon:
 uv tool install "photo-triage[model]" --torch-backend=rocm6.3
 ```
 
-`uvx "photo-triage[model]"` runs it once without installing. If you do not have
+To run it once without installing anything:
+
+```bash
+uvx --torch-backend=auto --from "photo-triage[model]" photo-triage ~/whatsapp-export
+``` If you do not have
 [uv](https://docs.astral.sh/uv/), `pipx install photo-triage` works too, but
 you then pick the PyTorch wheel yourself.
 

@@ -48,12 +48,20 @@ class Progress:
     notes: list[str] = field(default_factory=list)
     error: str | None = None
     started: float = 0.0
+    stage_started: float = 0.0
 
     @property
     def eta_seconds(self) -> float | None:
-        if not (self.running and self.done and self.total):
+        """Seconds left in the current stage, or None if it cannot be guessed.
+
+        Measured from when this stage began rather than from the start of the
+        build. Using the build's start makes every stage after the first
+        inherit its predecessors' time and claim minutes of work remaining for
+        something that finishes in seconds.
+        """
+        if not (self.running and self.done and self.total and self.stage_started):
             return None
-        elapsed = time.time() - self.started
+        elapsed = time.time() - self.stage_started
         return elapsed / self.done * (self.total - self.done)
 
     def as_json(self) -> dict:
@@ -141,6 +149,7 @@ class Build:
             for note in self._device.notes:
                 log.warning("%s", note)
             log.info("using %s", self._device.label)
+            log.info("loading CLIP (the first run downloads about 600 MB)")
             self._embedder = Embedder(self._device)
         return self._embedder
 
@@ -148,6 +157,7 @@ class Build:
         self.progress.stage = stage
         self.progress.done = 0
         self.progress.total = 0
+        self.progress.stage_started = time.time()
 
         def report(done: int, total: int) -> None:
             self.progress.done = done
