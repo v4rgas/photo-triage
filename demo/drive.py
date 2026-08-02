@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -62,6 +63,19 @@ def glide(to_x: int, to_y: int, steps: int = 28, pause: float = 0.014) -> None:
         time.sleep(pause)
 
 
+def _printed_url() -> str:
+    """The address the CLI has just printed in the terminal.
+
+    The port is derived from the folder rather than fixed, so this asks the
+    same function the CLI asks and gets the same answer, rather than scraping
+    it back off the screen.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from photo_triage.server import pick_port
+
+    return f"http://127.0.0.1:{pick_port(FOLDER.resolve())}"
+
+
 def focus(window: str) -> None:
     x("windowfocus", window)
     x("windowactivate", window)
@@ -82,6 +96,7 @@ x("key", "Return")
 mark("run")
 time.sleep(6.5)
 mark("serving")
+url = _printed_url()
 
 # ── 2. open the printed URL ────────────────────────────────────────────────
 
@@ -98,7 +113,7 @@ subprocess.Popen(
         "--disable-infobars",
         "--window-position=0,0",
         "--window-size=1600,1000",
-        "--app=http://127.0.0.1:5000",
+        f"--app={url}",
     ],
     env=ENV,
     stdout=subprocess.DEVNULL,

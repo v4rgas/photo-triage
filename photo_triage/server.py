@@ -8,11 +8,19 @@ hold for a POST made with curl exactly as they do for one made by the page.
 
 Binds to 127.0.0.1 only. This is someone's personal photo library and there is
 no authentication anywhere in it; there must never be a host argument.
+
+The port is derived from the folder rather than fixed. 5000 is Flask's default
+and is therefore busy on any machine that runs another Flask app, and on macOS
+it is taken by AirPlay Receiver out of the box. Deriving it also means two
+folders can be triaged at once without either one having to be told about the
+other, and that the address for a given folder is the same tomorrow.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import socket
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -26,6 +34,49 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PAGE = 300
 MAX_PAGE = 1000
+
+# Above Linux's default ephemeral range, which ends at 60999, so a derived port
+# cannot collide with a source port the kernel hands out for an outgoing
+# connection. Well clear of everything in /etc/services.
+_PORT_LOW = 61000
+_PORT_SPAN = 4000
+
+
+def pick_port(root: Path) -> int:
+    """A free port for this folder, stable across runs.
+
+    Derived by hashing the folder's path, so the same folder always answers at
+    the same address and a bookmark keeps working, while two folders opened at
+    once land somewhere different without either being configured. If the
+    derived port is taken, the search walks upward; if the whole window is
+    somehow full, the kernel picks.
+
+    There is a race between testing a port and Flask binding it, and it is not
+    worth closing: losing it means the server fails to start with a clear
+    address-in-use error, which is exactly what the user needs to read.
+    """
+    digest = hashlib.blake2s(str(root).encode("utf-8")).digest()
+    first = int.from_bytes(digest[:2], "big") % _PORT_SPAN
+    for step in range(64):
+        candidate = _PORT_LOW + (first + step) % _PORT_SPAN
+        if _free(candidate):
+            return candidate
+    return _free_ephemeral()
+
+
+def _free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _free_ephemeral() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
 
 
 def create_app(root: Path, build: Build | None = None) -> Flask:

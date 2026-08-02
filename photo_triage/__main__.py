@@ -28,7 +28,6 @@ from .runtime import ensure_model_runtime
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"  # never configurable; see server.py.
-PORT = 5000
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,20 +72,21 @@ def _build_and_serve(root: Path, args) -> int:
 
     import flask.cli
 
-    from .server import create_app
+    from .server import create_app, pick_port
 
     # Flask's own two-line banner announces the app's import path and that
     # debug mode is off, neither of which means anything to someone triaging
     # photographs. Our own line above it says where to go.
     flask.cli.show_server_banner = lambda *args, **kwargs: None
 
+    port = args.port or pick_port(root)
     build.start()
     app = create_app(root, build)
-    url = f"http://{HOST}:{PORT}"
+    url = f"http://{HOST}:{port}"
     print(f"photo-triage serving {root}\n  {url}", file=sys.stderr)
     if args.open:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    app.run(host=HOST, port=PORT, threaded=True)
+    app.run(host=HOST, port=port, threaded=True)
     return 0
 
 
@@ -232,6 +232,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--device", default="auto",
                         choices=["auto", "cuda", "mps", "cpu"])
     parser.add_argument("--open", action="store_true", help="open a browser")
+    parser.add_argument("--port", type=int, default=0,
+                        help="override the port derived from the folder")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="skip the purge confirmation")
     parser.add_argument("-v", "--verbose", action="store_true")

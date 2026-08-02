@@ -108,3 +108,41 @@ def test_stats_and_review_marking_round_trip(client):
     assert client.get("/api/stats").get_json()["reviewed"] == []
     client.post("/api/reviewed", json={"category": "meme_text"})
     assert client.get("/api/stats").get_json()["reviewed"] == ["meme_text"]
+
+
+def test_the_port_is_derived_from_the_folder_and_stays_put(tmp_path):
+    """Same folder, same address tomorrow. Different folders, different ones."""
+    from photo_triage.server import pick_port
+
+    first = tmp_path / "holidays"
+    second = tmp_path / "work"
+    first.mkdir()
+    second.mkdir()
+
+    assert pick_port(first) == pick_port(first)
+    assert pick_port(first) != pick_port(second)
+
+
+def test_the_derived_port_avoids_the_kernel_ephemeral_range(tmp_path):
+    """Below 61000 a derived port could clash with an outgoing connection."""
+    from photo_triage.server import pick_port
+
+    for name in ("a", "b", "c", "d", "e", "f", "g", "h"):
+        folder = tmp_path / name
+        folder.mkdir()
+        assert 61000 <= pick_port(folder) <= 65535
+
+
+def test_a_taken_port_is_stepped_over(tmp_path):
+    import socket
+
+    from photo_triage.server import pick_port
+
+    folder = tmp_path / "busy"
+    folder.mkdir()
+    wanted = pick_port(folder)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as squatter:
+        squatter.bind(("127.0.0.1", wanted))
+        squatter.listen(1)
+        assert pick_port(folder) != wanted
+    assert pick_port(folder) == wanted  # and it comes back once released

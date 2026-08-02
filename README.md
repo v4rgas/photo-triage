@@ -17,8 +17,14 @@ they stay on my machine.
 ```bash
 uv pip install -e .
 photo-triage ~/whatsapp-export
-#   http://127.0.0.1:5000
+#   http://127.0.0.1:63029
 ```
+
+The port is derived from the folder's path, so it is the same every time you
+open that folder and a bookmark keeps working, two folders can be triaged side
+by side without being told about each other, and nothing lands on 5000, which
+is Flask's default and is taken by AirPlay Receiver on macOS. `--port` if you
+want to choose.
 
 ![photo-triage in use](docs/demo.gif)
 
