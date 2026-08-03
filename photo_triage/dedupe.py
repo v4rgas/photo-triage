@@ -76,7 +76,7 @@ def find_duplicates(library: Library) -> list[DuplicateGroup]:
 def _by_exact_pixels(library: Library, rows: list[int]) -> dict[str, list[int]]:
     buckets: dict[str, list[int]] = {}
     for row in rows:
-        digest = library.records[row].pixel_md5
+        digest = library.records[row].pixel_digest
         if digest:
             buckets.setdefault(digest, []).append(row)
     return buckets

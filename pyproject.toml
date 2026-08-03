@@ -16,6 +16,7 @@ dependencies = [
     "flask>=3.0",
     "pillow>=10.0",
     "pillow-heif>=0.16",  # HEIC; Pillow cannot read what iPhones shoot
+    "simplejpeg>=1.7",    # the JPEG decode path, about twice Pillow's speed
     "imagehash>=4.3",
     "numpy>=1.26",
     "av>=12.0",          # video frame sampling; bundles its own ffmpeg

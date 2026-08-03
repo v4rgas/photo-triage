@@ -44,7 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields
 from pathlib import Path
 
 import numpy as np
@@ -75,7 +75,11 @@ class MediaRecord:
 
     Hashes describe a single representative frame, so a video and a still of
     the same scene are comparable and a re-encoded clip still matches its
-    original.
+    original. `pixel_digest` is over the decoded pixels and answers a different
+    question from the perceptual pair: not "do these look alike" but "are these
+    the same picture byte for byte once decoded". Which digest produced it is
+    deliberately not part of the name, so improving it later costs a rescan
+    rather than another rename.
 
     `error` is None for a readable item, otherwise a short reason string; such
     a record has no dimensions and no hashes and is never embedded, but it
@@ -90,7 +94,7 @@ class MediaRecord:
     height: int = 0
     phash: str = ""
     dhash: str = ""
-    pixel_md5: str = ""
+    pixel_digest: str = ""
     duration: float = 0.0
     segments: int = 1
     error: str | None = None
@@ -182,10 +186,19 @@ class Cache:
         """Every scanned image, in row order. Empty list if never scanned."""
         if not self._index_path.exists():
             return []
+        known = {f.name for f in dataclass_fields(MediaRecord)}
         records = []
         for line in self._index_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                records.append(MediaRecord(**json.loads(line)))
+                stored = json.loads(line)
+                # Ignore anything this version no longer knows about. An index
+                # written by a newer or older build is then still readable, and
+                # a field that goes away costs the rows that used it rather
+                # than the whole cache: without this, dropping one name makes
+                # every existing index unloadable at the first line.
+                records.append(
+                    MediaRecord(**{k: v for k, v in stored.items() if k in known})
+                )
         return records
 
     def save_index(self, records: list[MediaRecord]) -> None:
