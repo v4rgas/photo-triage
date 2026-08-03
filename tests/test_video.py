@@ -9,7 +9,12 @@ from photo_triage.cache import Cache, MediaRecord, segment_count, segment_spans
 from photo_triage.embed import row_vectors
 from photo_triage.library import Library, Query
 from photo_triage.scan import scan
-from photo_triage.video import looks_like_video, sample, sample_count
+from photo_triage.video import (
+    FRAMES_PER_VIDEO,
+    looks_like_video,
+    sample,
+    sample_count,
+)
 
 from .conftest import write_image
 
@@ -82,10 +87,20 @@ def test_sampling_never_returns_more_frames_than_the_clip_can_give(tmp_path):
 
 
 def test_a_one_second_clip_is_not_sampled_eight_times():
-    """The floor must not turn a very short clip into duplicates of itself."""
+    """The budget must not turn a very short clip into duplicates of itself."""
     assert sample_count(1.0) <= 5
-    assert sample_count(60.0) == 30
-    assert sample_count(600.0) == 32  # the ceiling holds
+
+
+def test_every_clip_costs_the_same_however_long_it_is():
+    """The whole point of a fixed budget: length must not drive up the cost.
+
+    A ten-minute video and a twenty-second one own the same number of vectors,
+    so no single clip can dominate the embedding pass.
+    """
+    assert sample_count(20.0) == FRAMES_PER_VIDEO
+    assert sample_count(60.0) == FRAMES_PER_VIDEO
+    assert sample_count(600.0) == FRAMES_PER_VIDEO
+    assert sample_count(0.0) == FRAMES_PER_VIDEO  # duration the container hid
 
 
 def test_video_containers_are_recognised_from_their_header():
