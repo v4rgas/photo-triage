@@ -4,7 +4,25 @@ See PROJECT.md for architecture, DESIGN.md for the UI, STYLE.md for how the
 code here is meant to be shaped.
 """
 
-__version__ = "0.2.3"
+def _installed_version() -> str:
+    """The version recorded at install time, so there is only one to maintain.
+
+    `pyproject.toml` is what the build and PyPI go by, which makes a literal
+    here a copy that nothing enforces: the two silently disagreed for a whole
+    release, and a copy that can drift will. Reading it back from the installed
+    metadata means the number can only be wrong in one place. A source tree
+    that was never installed has no metadata to read, and says so rather than
+    guessing at a number.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("photo-triage")
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+__version__ = _installed_version()
 
 
 def _teach_pillow_heic() -> None:
