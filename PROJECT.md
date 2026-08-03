@@ -704,10 +704,12 @@ Roughly in value order.
    ambiguous cases.
 4. **Blur / quality detection** — variance of Laplacian. Accidental pocket shots
    and out-of-focus frames are junk no semantic model will catch.
-5. ~~**Video support**~~ — done. Frames are sampled about every two seconds
-   and each keeps its own vector; a clip scores as its best moment rather than
-   its average, because averaging a multi-scene clip points the result at
-   nothing that is in it. Audio is still not read.
+5. ~~**Video support**~~ — done. Every clip contributes a fixed budget of
+   frames (`video.FRAMES_PER_VIDEO`, currently 8) spread across its length, so
+   a long video cannot cost more than a short one; only a clip of a second or
+   less gets fewer. Each frame keeps its own vector, and a clip scores as its
+   best moment rather than its average, because averaging a multi-scene clip
+   points the result at nothing that is in it. Audio is still not read.
 6. **Bigger model option** — SigLIP or ViT-L/14 for users with VRAM to spare.
 
 ---

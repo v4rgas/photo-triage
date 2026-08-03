@@ -26,7 +26,13 @@ what is wanted, which is classification.
 
 Audio is not read at all. CLIP has no ear, so a video that matters because of
 what someone says is not findable here, and that is a real limit rather than
-an oversight.
+an oversight. FFmpeg still parses the audio track while it works out what the
+file contains, and complains to the console about damaged ones; since nothing
+here uses the result, `_av` turns that chatter off.
+
+Decoding is deliberately single-threaded. Callers already run many clips at
+once in separate processes, and FFmpeg's own worker threads survive a fork
+badly -- see `sample`.
 """
 
 from __future__ import annotations
@@ -39,13 +45,15 @@ from PIL import Image
 
 log = logging.getLogger(__name__)
 
-# Roughly one sample every two seconds, which is where video-retrieval work
-# settles for clips of this length: enough to catch a scene change, few enough
-# that a long clip stays cheap.
-SECONDS_PER_SAMPLE = 2.0
-MIN_SAMPLES = 8
-MAX_SAMPLES = 32
+# Every clip contributes the same number of frames, however long it is. Letting
+# the count grow with duration made a single long video cost as much as a
+# hundred photographs -- and it is the frames themselves, held full-size while a
+# batch is assembled, that dominate memory during the embedding pass. A fixed
+# budget spread across the whole clip keeps coverage proportional (a 3-minute
+# video samples every 22s, a 20s one every 2.5s) at a cost that cannot run away.
+FRAMES_PER_VIDEO = 8
 _MAX_RATE = 5.0  # never sample faster than this, so a 1s clip is not 8 copies
+_UNKNOWN_SPACING = 2.0  # seconds between frames when the container hides duration
 
 # Phone videos routinely open on a black or still-focusing frame, and it drags
 # an average toward nothing. Trim both ends before spacing the samples.
@@ -68,8 +76,9 @@ class VideoInfo:
     """What a clip is, without decoding any of it.
 
     `duration` is in seconds and is 0.0 when the container does not say, which
-    happens with some phone recordings and with truncated files. Callers treat
-    an unknown duration as a short clip rather than as an error.
+    happens with some phone recordings and with truncated files. An unknown
+    duration is not an error: callers give such a clip the same frame budget as
+    any other and simply keep whatever decodes.
     """
 
     width: int
@@ -94,16 +103,15 @@ def looks_like_video(head: bytes) -> bool:
 def sample_count(duration: float) -> int:
     """How many frames to take from a clip of this length.
 
-    Clamped at both ends: below the floor a short clip would be described by
-    too little, and above the ceiling a long one costs more than the extra
-    moments are worth. Short clips are additionally capped so that a one-second
-    video is not sampled eight times into eight near-identical frames.
+    Every clip gets the same budget regardless of duration; only a very short
+    one gets less, so that a one-second video is not sampled eight times into
+    eight near-identical frames. An unknown duration is treated as a full-length
+    clip, because the alternative -- describing it with one frame -- loses more
+    than the extra decodes cost.
     """
-    wanted = round(duration / SECONDS_PER_SAMPLE) if duration > 0 else MIN_SAMPLES
-    wanted = max(MIN_SAMPLES, min(MAX_SAMPLES, int(wanted)))
-    if duration > 0:
-        wanted = min(wanted, max(1, int(duration * _MAX_RATE)))
-    return max(1, wanted)
+    if duration <= 0:
+        return FRAMES_PER_VIDEO
+    return max(1, min(FRAMES_PER_VIDEO, int(duration * _MAX_RATE)))
 
 
 def probe(path: Path) -> VideoInfo | None:
@@ -112,7 +120,7 @@ def probe(path: Path) -> VideoInfo | None:
     Reads the container header only. Cheap enough to call on every candidate
     file during a scan.
     """
-    import av
+    av = _av()
 
     try:
         with av.open(str(path)) as container:
@@ -138,7 +146,7 @@ def sample(path: Path, count: int | None = None) -> list[Image.Image]:
     video is very often recorded sideways with the correction left as metadata,
     and an unrotated frame embeds as a different picture entirely.
     """
-    import av
+    av = _av()
 
     frames: list[Image.Image] = []
     try:
@@ -146,7 +154,14 @@ def sample(path: Path, count: int | None = None) -> list[Image.Image]:
             if not container.streams.video:
                 return []
             stream = container.streams.video[0]
-            stream.thread_type = "AUTO"
+            # Decode on this thread alone. Every caller already samples many
+            # clips at once in separate processes, so FFmpeg's worker threads
+            # win nothing here and cost a great deal: the embedding pass forks
+            # its decoders, and a forked child that inherits a threaded decoder
+            # mid-operation can wait forever on a lock whose owner did not come
+            # across the fork. A run of consecutive videos is what makes that
+            # likely, and it is exactly what a folder of phone clips is.
+            stream.thread_type = "NONE"
             duration = _duration(container, stream)
             wanted = count if count is not None else sample_count(duration)
             rotation = _rotation(stream)
@@ -163,12 +178,36 @@ def sample(path: Path, count: int | None = None) -> list[Image.Image]:
 # -- internals -------------------------------------------------------------
 
 
+def _av():
+    """The `av` module, with FFmpeg's own console chatter turned off.
+
+    FFmpeg writes complaints straight to stderr from C, beneath Python's
+    logging entirely, so a damaged audio track in one holiday clip prints
+    `Input buffer exhausted before END element found` across whatever progress
+    bar is on screen. The message is also a lie by omission: nothing here
+    decodes audio, and the frames come out fine. Silencing it costs no
+    diagnostic power, because a clip that genuinely cannot be read is already
+    reported -- as an empty frame list, by the caller that asked for it.
+    """
+    import av
+
+    global _av_quietened
+    if not _av_quietened:
+        av.logging.set_level(av.logging.FATAL)
+        _av_quietened = True
+    return av
+
+
+_av_quietened = False
+
+
 def _timestamps(duration: float, count: int) -> list[float]:
     """Evenly spaced moments inside the trimmed span of the clip."""
     if duration <= 0:
         # An unknown duration still deserves a try: take the opening seconds,
-        # which is where a short clip's content is anyway.
-        return [index * SECONDS_PER_SAMPLE for index in range(count)]
+        # which is where a short clip's content is anyway. The spacing is a
+        # guess, so it is deliberately wide enough to cross a scene change.
+        return [index * _UNKNOWN_SPACING for index in range(count)]
     start = _HEAD_TRIM if duration > _HEAD_TRIM * 4 else 0.0
     stop = max(start, duration - _TAIL_TRIM)
     if count == 1:
